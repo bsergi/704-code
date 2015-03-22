@@ -1,0 +1,44 @@
+# function attempts to simulate Situation B in Simmons et. al. (2011)
+SituationB <- function(pval){
+  
+  # Normal random vector with mean = 0, sd = 1 for group 2
+  Liking1 <- rnorm(20, 0, 1)        
+  
+  # Normal random vector with mean = 0, sd = 1 for group 2
+  Liking2 <- rnorm(20, 0, 1)        
+  
+  # Two-Sample t-test (assume equal variance)
+  t.test1 <- t.test(Liking1, Liking2, var.equal = TRUE) 
+  
+  #signif = 1 if the t-test gives p < .05, 0 otherwise
+  signif <- ifelse(t.test1$p.value < pval,
+                   1, # test is significant at pval level
+                   0) # test is not significant at pval level
+  
+  # if the test is not signficant collect 10 additional observations 
+  if(signif == 0){
+    # 10 additional observations for group 1
+    Liking1 <- c(Liking1, rnorm(10, 0, 1))
+      
+    # 10 additional observations for group 2
+    Liking2 <- c(Liking2, rnorm(10, 0, 1))
+        
+    #Two-Sample t-tests
+    t.test1 <- t.test(Liking1, Liking2, var.equal = TRUE) # Assumes equal var
+    
+    # retest for signficance after taking additional observations
+    signif <- ifelse(t.test1$p.value < pval,
+                     1, # test is significant at pval level
+                     0) # test is not significant at pval level 
+  }
+  
+  # output significane
+  return(signif)
+}
+
+# simulate Situation B 15,000 times
+replicates <- replicate(15000, SituationB(0.05))
+
+# calculate the number of times any of the three tests was signficant 
+# (null hypothesis rejected)  across the 15,000 trials
+SitBsum <- mean(replicates); SitBsum
