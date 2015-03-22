@@ -40,7 +40,7 @@ SituationB <- function(pval){
                      0) # test is not significant at pval level 
   }
   
-  # output significane
+  # output significance
   return(signif)
 }
 
