@@ -1,4 +1,12 @@
-# function attempts to simulate Situation B in Simmons et. al. (2011)
+# Brian Sergi 
+# HW 19-704 
+# 3/24/2015
+
+# This R code attempts to replicate the results from Situation B in Simmons et. al. (2011), a study
+# which found that the proportion of false positives when adding 10 additional observations was approximately 7.7% 
+# when testing at the 5% level
+
+# Function attempts to simulate Situation B in Simmons et. al. (2011)
 SituationB <- function(pval){
   
   # Normal random vector with mean = 0, sd = 1 for group 2
