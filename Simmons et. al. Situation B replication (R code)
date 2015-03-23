@@ -3,20 +3,20 @@
 # 3/24/2015
 
 # This R code attempts to replicate the results from Situation B in Simmons et. al. (2011), a study
-# which found that the proportion of false positives when adding 10 additional observations was approximately 7.7% 
-# when testing at the 5% level
+# which found that higher proportion of false positives when adding 10 additional observations relative 
+# to the rate predicted by the significance level of the test being conducted
 
-# Function attempts to simulate Situation B in Simmons et. al. (2011)
-SituationB <- function(pval){
+# function attempts to simulate Situation B in Simmons et. al. (2011)
+SituationB <- function(pval){     # input pval = significance level to be tested at
   
   # Normal random vector with mean = 0, sd = 1 for group 2
-  Liking1 <- rnorm(20, 0, 1)        
+  variable1 <- rnorm(20, 0, 1)        
   
   # Normal random vector with mean = 0, sd = 1 for group 2
-  Liking2 <- rnorm(20, 0, 1)        
+  variable2 <- rnorm(20, 0, 1)        
   
   # Two-Sample t-test (assume equal variance)
-  t.test1 <- t.test(Liking1, Liking2, var.equal = TRUE) 
+  t.test1 <- t.test(variable1, variable2, var.equal = TRUE) 
   
   #signif = 1 if the t-test gives p < .05, 0 otherwise
   signif <- ifelse(t.test1$p.value < pval,
@@ -26,13 +26,13 @@ SituationB <- function(pval){
   # if the test is not signficant collect 10 additional observations 
   if(signif == 0){
     # 10 additional observations for group 1
-    Liking1 <- c(Liking1, rnorm(10, 0, 1))
+    variable1 <- c(variable1, rnorm(10, 0, 1))
       
     # 10 additional observations for group 2
-    Liking2 <- c(Liking2, rnorm(10, 0, 1))
+    variable2 <- c(variable2, rnorm(10, 0, 1))
         
     #Two-Sample t-tests
-    t.test1 <- t.test(Liking1, Liking2, var.equal = TRUE) # Assumes equal var
+    t.test1 <- t.test(variable1, variable2, var.equal = TRUE) # Assumes equal var
     
     # retest for signficance after taking additional observations
     signif <- ifelse(t.test1$p.value < pval,
@@ -44,9 +44,17 @@ SituationB <- function(pval){
   return(signif)
 }
 
-# simulate Situation B 15,000 times
+# simulate Situation B 15,000 times at 5% significance level
 replicates <- replicate(15000, SituationB(0.05))
 
 # calculate the number of times any of the three tests was signficant 
 # (null hypothesis rejected)  across the 15,000 trials
-SitBsum <- mean(replicates); SitBsum
+SitBsum1 <- mean(replicates); SitBsum1
+
+# repeat simulation at 10% significance level
+replicates <- replicate(15000, SituationB(0.10))
+SitBsum2 <- mean(replicates); SitBsum2
+
+# repeat simulation at 1% significance level
+replicates <- replicate(15000, SituationB(0.01))
+SitBsum3 <- mean(replicates); SitBsum3
