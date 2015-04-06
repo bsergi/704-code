@@ -1,0 +1,471 @@
+---
+title: "Sergi_HW3"
+author: "Brian Sergi"
+date: "April 7, 2015"
+output: html_document
+---
+
+```{r global_options, include=FALSE}
+# global kitting options for report output
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE, fig.align='center')
+```
+
+```{r}
+# load packages
+library(AER)
+library(knitr)
+library(quantreg)
+library(tables)
+library(car)
+library(mgcv)
+
+# load data
+data(HousePrices)
+```
+
+### Section 1: Replication report
+
+This homework attempts to replicate the results from the testing of different parametric regression models on house price data by Anglin and Gencay (1996). The data used by the authors is taken from actual house sales in Windsor and Essex county (Canada) in July, August, and September of 1987. The data inlcudes information on house sale prices, the lotsize, the number of bedrooms, bathrooms, stories, and garage spaces, and several other house characteristics, such as whether the house has a driveway, a recreational room, a full and finished basement, gas water heating, central air conditioning, and whether the house is located in a "preferred" neighborhood. There are 546 houses in the data set and no missing values in the observations. 
+
+#### 1. OLS regression and comparison
+
+The first step was to try to replicate two of the regressions performed by the authors. The first regression is a "benchmark" model that regresses log of price on the other variables, using log transforms for  lotsize, bedrooms, full bathrooms, and stories. 
+
+A comparison of the authors' results (Table II) and the replicated regression results can be found in the following table. The table shows that the authors' results (both estimated coefficients and t-values) can be replicated very precisely for the specified model.
+
+```{r}
+# replication of regression from table II (benchmark)
+reg.II.lm <- lm(log(price) ~ driveway + recreation + fullbase + gasheat + aircon + garage + prefer +
+             log(lotsize) + log(bedrooms) + log(bathrooms) + log(stories), data=HousePrices)
+
+# extract coefficients and rename for printing
+table.II <- summary(reg.II.lm)$coefficients[, c(1,3)]
+
+
+# input authors' results for table II for comparison
+paper.II<- cbind(c(7.921, 0.110, 0.060, 0.096, 0.173, 0.171, 0.049, 0.130, 0.313, 0.089, 0.264, 0.165), 
+                  c(36.137, 3.863, 2.283, 4.417, 3.929, 8.031, 4.238, 5.693, 11.623, 2.031, 8.450, 6.627))
+table.II<- cbind(paper.II[,1], table.II[,1], paper.II[,2], table.II[,2])
+
+# column names
+colnames(table.II) <- c("Authors' estimates", "Replicated estimates", "Authors' t-values", "Replicated t-values")
+rownames(table.II) <- c("(Intercept)", "Has driveway", "Has recreation room", "Has full basement", 
+                        "Has gas heat", "Has air conditioner", "Has garage", "Preferred neighborhood",
+                        "Log of lotsize", "Log of bedrooms",  "Log of bathrooms", "Log of stories")
+
+# print table
+kable(table.II, align='c', caption = "Replication of Table II", digits=4)
+
+
+## extra code
+
+# calculate SSR
+SSR <- sum(reg.II.lm$residual^2)
+
+# calculate R^2
+TSS <- sum((log(HousePrices$price) - mean(log(HousePrices$price)))^2)
+R2 <- 1 - (SSR/TSS)
+
+# calculate adjusted R^2
+R2.adjust <- 1-(1-R2)*((nrow(HousePrices)-1)/((nrow(HousePrices)-11-1)))
+```
+
+The second model that the authors test is similar to the benchmark model except that it removes the log transforms for the variables for number of bedrooms, bathrooms, and stories. 
+
+The following table highlights the comparison of the authors' results from this second model (Table III) and the replicated regression results. As with the first model, the authors' results are closely replicated, but this time with one exception: for the bedroom variable, the replicated values is different from the authors' estimate by a factor of 10. Given that the digits are the same value, this seems to by a typographical error (although perhaps a serious one in a peer-reviewed journal!).
+
+```{r}
+# replication of regression from table III
+reg.III.lm <- lm(log(price) ~ driveway + recreation + fullbase + gasheat + aircon + garage + prefer +
+             log(lotsize) + bedrooms + bathrooms + stories, data=HousePrices)
+
+# extract coefficients and rename for printing
+table.III <- summary(reg.III.lm)$coefficients[, c(1,3)]
+
+
+# input authors' results for table II for comparison
+paper.III<- cbind(c(7.745, 0.110, 0.058, 0.105, 0.179, 0.166, 0.048, 0.132, 0.303, 0.344, 0.166, 0.092), 
+                  c(35.801, 3.904, 2.225, 4.817, 4.079, 7.799, 4.179, 5.816, 11.356, 2.410, 8.154, 7.268))
+table.III<- cbind(paper.III[,1], table.III[,1], paper.III[,2], table.III[,2])
+
+# column names
+colnames(table.III) <- c("Authors' estimates", "Replicated estimates", "Authors' t-values", 
+                         "Replicated t-values")
+
+rownames(table.III) <- c("(Intercept)", "Has driveway", "Has recreation room", "Has full basement", 
+                        "Has gas heat", "Has air conditioner", "Has garage", "Preferred neighborhood",
+                        "Log of lotsize", "Number of bedrooms",  "Number of bathrooms", 
+                        "Number of stories")
+
+# print table
+kable(table.III, align='c', caption = "Replication of Table III", digits=4)
+
+
+## extra code
+
+# calculate SSR
+SSR <- sum(reg.III.lm$residual^2)
+
+# calculate R^2
+TSS <- sum((log(HousePrices$price) - mean(log(HousePrices$price)))^2)
+R2 <- 1 - (SSR/TSS)
+
+# calculate adjusted R^2
+R2.adjust <- 1-(1-R2)*((nrow(HousePrices)-1)/((nrow(HousePrices)-11-1)))
+```
+
+#### 2. Interpretation of coefficients
+
+In both models in question the regression is being performed with a log transform on the independent variable. Since the "has a driveway" variable (DRV) is binary, this makes it a log-level comparison. In both regressions, this coefficient is 0.110. Accordingly, the interpretation of this coefficient is that the mean price of houses that have a driveway is 11% higher (100*0.11 as percent) than houses that do not have a driveway. 
+
+For the lotsize variable (LOT), both the independent and the dependent variable have been log transformed. This log-log comparison means that a percentage increase in the dependent variable is associated with a percentage increase in the outcome. For both models, a 1% change in lotsize is associated with around 0.30% higher prices.
+
+There a several continuous variables for which mean-centering may be appropriate. For example, there is no sensible interpreation to a house with zero lotsize, bedrooms, bathrooms, or stories, so these might all be appropriate for mean-centering. Mean centering would however not make sense for the binary categorical variables in the data set. Standardizing the variables would also be an option, but may not be very sensible for the variables with only a few discrete values (bedrooms, bathrooms, and stories) and would be more difficult to interpret. 
+
+### Section 2: The 5 data stories
+
+#### 1. Histograms
+
+The following graph shows a histogram of house prices. The histogram shows what appears to be a log-normal distribution, with a large concentration of values around $50,000 and a heavy tail that extends out to $190,000. The lowest house price in the distribution is $25,000.  
+
+```{r}
+# histogram of house prices
+hist(HousePrices$price, breaks='FD', main = "Histogram of house prices", 
+                   xlab = "House prices ($)", xlim=c(0,200000))
+```
+
+We can also look at a histogram of the log-transformed house prices. This histogram shows a distribution that looks somewhat normal and bell-shaped. The max value is around 12.15 and the min value around 10.12. 
+
+```{r}
+# histogram of house prices
+hist(log(HousePrices$price), breaks='FD', main = "Histogram of log house prices", 
+                   xlab = "Log of house prices", xlim = c(10, 12.5)) 
+```
+
+The following histogram shows the frequency of different lot sizes. We can see a large concentration of lotsizes between around 2,500 and 5,000 square feet and heavy right tail of houses with large lot sizes. In fact, there seems to be a gap between the bulk of the distribution and then some outlying houses that are very large compared to the others. The lowest house size is 16,200 square feet. The shape of this distribution suggests that lot sizes may be normally distributed after a log transform. 
+
+
+```{r}
+# histogram of house prices
+hist(HousePrices$lotsize, breaks='FD', main = "Histogram of lot sizes", 
+                   xlab = "Lot size (sq. ft.)", xlim = c(0, 20000))
+```
+
+The next two histograms show the breakdown of houses by bedrooms and bathrooms. The graphs show that the lion's share of hosues have 3 bedrooms, with some having 2 or 4 and much fewer having anything outside that range. Likewise, over 400 of the 546 houses have 1 bathroom and another 100 have 2 bathrooms, with only a few with higher numbers than these.
+
+```{r, fig.width=10}
+par(mfrow = c(1, 2))
+# histogram of bedrooms and bathrooms
+hist(HousePrices$bedrooms, breaks='FD', main = "Histogram of bedrooms", 
+                   xlab = "Number of bedrooms", xlim = c(0, 7))
+
+hist(HousePrices$bathrooms, breaks='FD', main = "Histogram of bathrooms", 
+                   xlab = "Number of bathrooms", xlim = c(0, 5))
+```
+
+Finally, we can also look at the histogram of houses by by stories. The histogram shows that the data is somewhat evenly split across houses with 1 and 2 stories, with a smaller number of houses that have 3 or 4 stories. 
+
+```{r}
+# histogram of house prices
+hist(HousePrices$stories, breaks='FD', main = "Histogram of stories", 
+                   xlab = "Number of stories", xlim = c(0, 5))
+```
+
+#### 2. Tables
+
+We can also look at the breakdown of houses by descriptive characteristics. The following table shows a breakdown of houses by their features.
+
+```{r}
+# tables
+house.table <- rbind(table(HousePrices$driveway),
+                     table(HousePrices$recreation),
+                     table(HousePrices$fullbase),
+                     table(HousePrices$gasheat),
+                     table(HousePrices$aircon),
+                     table(HousePrices$prefer))
+
+rownames(house.table) <- c("Driveway", "Recreational room", "Full basement", 
+                           "Gas hot water heating", "Air conditioning", "Preferred neighborhood")
+colnames(house.table) <- c("No", "Yes")
+
+kable(house.table, caption = "Number of houses by characteristic")
+```
+
+The table illustrates that most of the houses (over 75%) in the sample have driveways. In addition, a relatively large number have full basements and air conditioning, although the majority in the sample do not. The vast majority of the houses do not have gas water heating. One interesting point of consideration is also the fact that most of the houses are not located in a preferred neighborhood.
+
+One thing that this table does not illustrate is the extent to which the categorical variables are overlapping. For example, it may be the case that all of the houses in the preferred neighborhood are also the ones that have driveways, gas water heating, air conditioning, etc. This type of overlap would illustrate some collinearity and might be a problem for analysis of the data.
+
+#### 3. Gauss-Markov assumptions
+
+The following is an assesment of whether the Gauss-Markov assumptions might hold for this benchmark model used in this dataset:
+
+1. Linearity in parameters -- We can likely imagine a "real world" model in which the 11 factors contribute additively to determine the price of a house within some random error term. While the relationships may not be exactly linear (e.g. lot size), we could use logarthmic or other transformations to get back to a linear model. For the inputs that are categorial (or factor) variables, these could factor in to a linear model as "dummy" variables. Accordingly, this assumption does not seem problematic in this context, although there is always the possibility of a more complicated model.
+
+2. Random sampling --  The data used here was drawn from actual house sales in Windsor and Essex county in July, August, and September in 1987. Although it's not entirely clear who the population is (all houses in Windsor and Essex county?), there are additional problems in the sampling in that the data only includes sales from 3 months (perhaps summer prices tend to be higher than others) and that it only includes houses that were actually sold (making it hard to infer anything about the value of houses that weren't sold), which may be probelematic for using OLS to make conclusions about any larger population.
+
+3. Zero conditional mean -- It is impossible to know for sure whether the error term is definitively mean zero. This analysis includes a number of variables (11 in this case) which might help remove the risk of omitted variable bias, but there is always a chance that there are factors being excluded that might have an effect (for example, perhaps the age of the house is an important variable). Since this analysis involves hedonic pricing and there is no random assignment, we cannot guarantee mean zero error.  
+
+4. No perfect collinearity -- Our initial data analysis suggests that some of the variables may be correlated, however it doesn't seem likely that any of the will be perfectly correlated (and the regression succesfully runs). A closer exploration of the distribution of houses with different characteristics (e.g. do all houses with gas hot water heating also have air conditioning?) would help reveal the extent that different variables are correlated, but it seems safe to suppose that perfect collinearity is unlikely in this data. 
+
+#### 4. Jackknife-residuals
+
+The following plot compares the fitted values against the jackknife residuals. The plot shows that there are some very large residuals towards the higher ened of the data. In addition, there is low variance of the residuals for low fitted values and much greater variance for the higher values. This is a sign of heteroskedasticity for the fitted price values based on the benchmark model for untransformed price data.
+
+```{r}
+# replication of regression from table III (benchmark) with house prices
+reg.price.lm <- lm(price ~ driveway + recreation + fullbase + gasheat + aircon + garage + prefer +
+             log(lotsize) + bedrooms + bathrooms + stories, data=HousePrices)
+
+# Plot the fitted values and jackknife residuals
+plot(jitter(fitted(reg.price.lm)),  
+     jitter(rstudent(reg.price.lm)),
+     xlab = "Fitted Values",
+     ylab = "Jackknife Residuals",
+     main = "Plot of Jackknife residuals against fitted values")
+abline(h = 0)
+
+
+# # plot qqPlot for jacknife residuals
+# qqPlot(reg.price.lm,
+#        pch  = 19,
+#        col  = rgb(0, 0, 0, .5),
+#        ylab = "Jackknife Residuals")
+
+```
+
+In order to try to improve our linear model, we can attempt a transformation of the price variable. An appropriate transformation can be uncovered using a Box-Cox transformation, shown in the following plot. Th plot illustrates that the most appropriate value of lambda is a range around 0.
+
+```{r}
+# BoxCox plot
+boxCox(price ~ driveway + recreation + fullbase + gasheat + aircon + garage + prefer +
+       log(lotsize) + bedrooms + bathrooms + stories,
+       data   = HousePrices,
+       family = "yjPower",
+       main = "Box-Cox transformation of house prices")  # Use the Yeo-Johnson power family
+```
+
+This value of lambda seems to make sense in the context of the data. For example, we know that lambda values less than 1 indicate the need to compress the right tail and expand the left, which make sense given the heavy right tail in the histogram of hosue prices. In addition, a lambda close to zero suggests that a log transforam is appropriate for this data. 
+
+#### 5. Component-residual plot
+
+We can assess non-linearities in the model using a component-residual plot, shown below for the untransformed lotsize variable. The graph shows that there are indeed some non-linearities that aren't captured by the lot size prediction (as indicated by the disparities in the green line). For example, we can see that the model overpredicts house prices at the low end of lotsize, then underpredicts, and then overpredicts toward the right tail.
+
+```{r}
+# replication of regression from table III benchmark
+reg.lot.lm <- lm(log(price) ~ driveway + recreation + fullbase + gasheat + aircon + garage + prefer +
+             lotsize + bedrooms + bathrooms + stories, data=HousePrices)
+
+crPlots(reg.lot.lm, terms="lotsize", pch = 19, col = rgb(0,0,0, .5),
+        main = "Component-residual plot for lotsize",
+        xlab = "Lot size (sq. ft.)",
+        ylab = "Component-residual for log(price)")
+
+```
+
+These deviations suggest that a transformation of lot size may be appropriate. Since the data is somewhat crunched to the left and more spread out to the right, we can suppose that a log transformation might be a good choice. We can also see some slight changes in concavity, so perhaps some sort of cubic function might be appropriate. 
+
+We can assess the appropriate transformation using Box-Tidwell, which gives an output of $\lambda$ = -0.3326529.This value is relatively close to 0, which would represent a log transform, but suggests that transforming lotsize by a power of -0.33 would provide a better fit.
+
+```{r}
+# BoxTidwell
+box <- boxTidwell(log(price) ~ lotsize, 
+           other.x = ~ driveway + recreation + fullbase + gasheat + aircon + 
+           garage + prefer + bedrooms + bathrooms + stories, data = HousePrices)
+```
+
+We can attempt to verify the usefulness of this transformation by replotting the component-residual plot using the -0.33 power transformation. The plot shows that the regression model now more closely tracks the actual observed data, suggesting improved fit from the transformation.
+
+```{r}
+# check new crPlots for 
+reg.lot.lm <- lm(log(price) ~ driveway + recreation + fullbase + gasheat + 
+                   aircon + garage + prefer + I(lotsize^(-0.33)) + log(bedrooms) + 
+                   log(bathrooms) + log(stories), data=HousePrices)
+
+crPlots(reg.lot.lm, terms="I(lotsize^(-0.33))", pch = 19, col = rgb(0,0,0, .5),
+        main = "Component-residual plot for -0.33 power transform of lotsize",
+        xlab = "-0.33 transform lot size (sq. ft.)",
+        ylab = "Component-residual for log(price)")
+
+```
+
+#### 6. Generalized Additive Model
+
+We can also investigate the functional form using the generalized additive model function (GAM). The following plot shows the plot of lot size and the regressed output using a smoothing function of lot size. 
+
+The smoothing function improves the model predictiveness and captures some of the non-linearities. We can also see larger bands at the right where there are fewer data points. 
+
+```{r}
+# generalized additive model 
+gam.lotsize <- with(HousePrices, gam(log(price) ~ driveway + recreation + fullbase + gasheat + aircon + garage + prefer +
+               s(lotsize) + log(bedrooms) + log(bathrooms) + log(stories)))
+
+# partial residual plot
+plot(gam.lotsize, residuals = TRUE, shade = TRUE)
+```
+
+The general functional form seems somewhat similar to the inverse cube root suggested by the -0.33 lambda value from Box-Tidwell and the pattern of the component-residual plots, confirming our expectations. 
+
+#### 7. Forecasting
+
+For the forecasting story, I compared the benchmark model (which uses log of lotsize) with the semi-parametric GAM and the transformation suggested by Box-Tidwall (power of -0.33 of lotsize) using a 5-fold cross validation test. The summary statistics of the root mean squared (rMSE) errors that result from repeating this cross-validation 1,000 times are show in the table below. 
+
+```{r}
+# Cross validation 
+
+# cross-validation testing function
+crossValidation <- function(x){
+ 
+  # create vector representing row id numbers
+  ids <- 1:nrow(x)
+  
+  # sample 4/5 of the observations for training
+  train.ids <- sample(ids, 4*length(ids)/5, replace = FALSE)
+  
+  # separate test and train data
+  test <- x[-train.ids,]
+  train <- x[train.ids,]
+  
+  # benchmark
+  train1 <- lm(log(price) ~ driveway + recreation + fullbase + 
+                 gasheat + aircon + garage + prefer +
+             log(lotsize) + bedrooms + bathrooms + stories, data=train)
+  
+  # gam
+  train2 <- with(train, gam(log(price) ~ driveway + recreation + 
+                              fullbase + gasheat + aircon + 
+                              garage + prefer + s(lotsize) + bedrooms + 
+                              bathrooms +  stories))
+  # -0.33 transform
+  train3 <- lm(log(price) ~ driveway + recreation + fullbase + 
+                 gasheat + aircon + garage + prefer +
+             I(lotsize^(-0.33)) + bedrooms + bathrooms + stories, data=train)
+  
+  # calculate rMSE squared values
+  test1 <- (log(test$price) - predict(train1, test))^2
+  rMSEtest1 <- sqrt(sum(test1) / length(test1))
+  
+  test2 <- (log(test$price) - predict(train2, test))^2
+  rMSEtest2 <- sqrt(sum(test2) / length(test2))
+  
+  test3 <- (log(test$price) - predict(train3, test))^2
+  rMSEtest3 <- sqrt(sum(test3) / length(test3))
+  
+  return(c(rMSEtest1, rMSEtest2, rMSEtest3))
+}
+
+set.seed(1)
+
+# repeat cross validation test 1,000 times
+rMSEresults <- replicate(1000, crossValidation(HousePrices))
+
+# print output
+table <- rbind(summary(rMSEresults[1,]), summary(rMSEresults[2,]), summary(rMSEresults[3,]))
+rownames(table) <- c("Benchmark model with log transform on lotsize", 
+                     "Semi-parametric generalized additive model", 
+                     "Model based on power of -0.33 transform on lotsize" )
+
+kable(table, caption = "Cross-validation on lotsize (root mean squared error)", digits = 4)
+
+```
+
+The results of this cross-validation show that in terms of the mean rMSE, the model with the -0.33 transformation proposed by Box-Tidwell slightly beats out the benchmark model, which in turn slightly outperforms the GAM. The rMSE of all of these models are however very close to each other. This probably suggests that the benchmark model is ok, although you could do slightly better with the -0.33 transformation.  
+
+#### 8. Standard error estimates
+
+Finally, we can examine the differences between the robust and classical standard errors, highlighted in the table below. The table shows that there is not a very noticeable difference between the two standard errors, and that the robust errors are consistently larger or smaller than the classical ones. This suggests that there is not too much heteroskedasticity to worry about from using the benchmark model with the log transforms. 
+
+```{r}
+# table III model
+lm1 <- lm(log(price) ~ driveway + recreation + fullbase + gasheat + aircon + garage + prefer +
+          log(lotsize) + bedrooms + bathrooms + stories, data=HousePrices)
+
+# robust standard error estimates
+robust.se <- coeftest(lm1, vcov = vcovHC(lm1, type = "HC0"), df = df.residual(lm1))[,2]  
+
+# classical standard error estimates
+classical.se <- summary(lm1)$coefficients[,2]
+
+# table of coefficients
+se.table <- cbind(robust.se, classical.se)
+
+colnames(se.table) <- c("Robust standard errors", "Classical standard errors")
+rownames(se.table) <- c("(Intercept)", "Has driveway", "Has recreation", "Has full basement", 
+                        "Has gas heat", "Has air conditioner", "Has garage", "Preferred neighborhood",
+                        "Log of lotsize", "Bedrooms",  "Bathrooms", "Stories")
+  
+# print coefficients in table
+kable(se.table, caption = "Comparison of standard error estimates ", digits = 6)
+
+```
+
+#### 9. Statistical inference and causality
+
+The usefulness of statistical inference depends on the population of interest. In this case, we certainly have a convenience sample that draws on registered house prices from a specific location and a specific time period (June - August). Given this, we can probably make inferences about the data itself (i.e. treat the sample as the population), but we should be wary about trying to make more sweeping generalizations about houses in other areas.
+
+As far as causality, the regression coefficients suggest that certain house characeristics (such as having a driveway or larger lot sizes) are associated with higher prices. However, since this is hedonic pricing and not a randomized controlled trial we do not have any control over how these attributes were assigned. In addition, there may be confounding or omitted factors that we haven't accounted for that could exlain the effects observed here. Accordingly, although it suggests some plausible causal stories (most people might indeed be willing to may more for a house with a driveway) we can't necessarily assume causal effects from this data.  
+
+### Data citation
+
+Anglin and Gencay. "Semi-parametric Estimation of a Hedonic Price Function". Journal of Applied Econometrics 11.6 (Nov-Dec 1996), 633-648.
+
+This code can be found on GitHub at 
+
+```{r, eval=FALSE}
+#### Extra code
+
+# robust standard errors
+lm1.resid.sq <- resid(lm1)^2
+lotsize.sq.dist <- (log(HousePrices$lotsize) - mean(log(HousePrices$lotsize)))^2  
+lm1.robust <- sqrt((sum(lm1.resid.sq*lotsize.sq.dist))/sum(lotsize.sq.dist)^2)
+
+# "classical" standard errors  
+lm1.se <- sqrt((sum(lotsize.sq.dist)))/(nrow(HousePrices) - 12)
+```
+
+```{r, eval=FALSE}
+# backcasting
+
+# 1. original regression with log of lotsize
+reg.lot.lm <- lm(log(price) ~ driveway + recreation + fullbase + gasheat + aircon + garage + prefer +
+             log(lotsize) + log(bedrooms) + log(bathrooms) + log(stories), data=HousePrices)
+
+
+# use regression to backcast on the data
+predictions <- predict(reg.lot.lm, HousePrices)
+
+# find min and max values for plot dimensions
+min.d <- floor(min(log(HousePrices$price), predictions)) 
+max.d <- ceiling(max(log(HousePrices$price), predictions)) 
+
+# plot the backcast
+par(mfrow = c(1, 2))
+plot(predictions, log(HousePrices$price),
+     xlim = c(min.d, max.d),
+     ylim = c(min.d, max.d),
+     ylab = "Log of price data",
+     xlab = "Predicted log prices",
+     main = "Backcasting of log prices\n(log lotsize transform)")
+abline(0,1)
+
+# 2. gam model
+gam.lotsize <- with(HousePrices, gam(log(price) ~ driveway + recreation + fullbase + gasheat + aircon + garage + prefer +
+             s(lotsize) + log(bedrooms) + log(bathrooms) + log(stories)))
+
+
+# use regression to backcast on the data
+predictions.gam <- predict(gam.lotsize, HousePrices)
+
+# find min and max values for plot dimensions
+min.d <- floor(min(log(HousePrices$price), predictions.gam)) 
+max.d <- ceiling(max(log(HousePrices$price), predictions.gam)) 
+
+# plot the backcast
+plot(predictions.gam, log(HousePrices$price),
+     xlim = c(min.d, max.d),
+     ylim = c(min.d, max.d),
+     ylab = "Log of price data",
+     xlab = "Predicted log prices",
+     main = "Backcasting of log prices\nGAM")
+abline(0,1)
+
+```
