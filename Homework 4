@@ -1,0 +1,522 @@
+---
+title: "Sergi_HW4"
+author: "Brian Sergi"
+date: "April 14, 2015"
+output: html_document
+---
+
+```{r global_options, include=FALSE}
+# global kitting options for report output
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE, fig.align='center')
+```
+
+```{r}
+# load packages
+library(AER)
+library(knitr)
+library(quantreg)
+library(tables)
+library(car)
+library(mgcv)
+library(plyr)
+library(ROCR)
+
+# load data
+data(SwissLabor)
+
+# add age squared variables
+SwissLabor$agesq <- ((SwissLabor$age)^2)
+SwissLabor$agesq2 <- ((SwissLabor$age*10)^2)/1000
+
+````
+
+### Section 1: Replication report
+
+This report explores the analysis by Gerfin (1996) on participation in the labor market of Swiss women. Gerfin uses data collected in a representative health survey conducted in Switzerland and Germany in 1981. The data includes information on the women's age (in decades), education (years), number of young children, number of old children, logged income, foreign status (1 for permanent foreign resident, 0 otherwise), and participation in the labor market (1 for partipant, zero otherwise). 
+
+While Gelfin notes that there are 873 observations in the data, the actual dataset provided only includes 872 individuals. 
+
+#### 1. Probit regression
+
+Gerfin conducts a probit regression on participation in the labor market, using the other variables as independent variables. In addition to those variables, Gelfin writes that he adds a term for age squared divided by 1000. However, in attempting to replicate the regression I found that using age squared divided by 1000 produced an estimate that was an order of magnitude larger than Gelfin's estimate. Using age squared divided by 100 (or age in decades squared) seemed to correct this mistake, so I used this version of age squared for the rest of the analysis. I attempted to replicate the author's probit regression given these assumptions, and a comparison to Gelfin's results is given in the table below.
+
+```{r}
+probit.swiss <- glm(participation ~ age + agesq + education + youngkids + 
+                 oldkids + income + foreign, data=SwissLabor, 
+                 family = binomial(link = "probit"))
+
+swiss.table <- summary(probit.swiss)$coefficients[,1:2]
+
+tableI <- cbind(c(3.75, 2.08, -0.29, 0.02, -0.71, -0.15, -0.67, 0.71), swiss.table[,1],
+                c(1.41, 0.41, 0.05, 0.02, 0.10, 0.05, 0.13, 0.12), swiss.table[,2])
+
+colnames(tableI) <- c("Author estimates", "Replicated estimates", 
+                      "Author standard errors", "Replicated standard errors")
+
+kable(tableI, digits = 4, caption = "Probit regression on labor market participation")
+
+```
+
+The comparison table shows that the author's results (coefficient estimates and standard errors) were very closely replicated.
+
+### Section 2: The 5 data stories
+
+#### 1. Histograms
+
+The histogram below shows the data broken down by age (in decades). We can see that the youngest member in the data set is two decades old and the oldest is 6.2 decades old (or 62 years). The distribution looks most heavily concentrated between 2.5 and 4.5 decades, with a slightly right-skewed tail toward higher ages.  
+
+```{r, fig.align='center'}
+# histogram of age
+with(SwissLabor, hist(age, breaks='FD', xlim=c(0, 7), xlab = "age (in decades)"))
+```
+
+The next histogram shows the breakdown of years of education. We can see some spikes around 8 and 12 years, and a longer tail toward higher education levels. There is also what seems to be a relatively large number of individuals with low levels (< 5 years) of education. 
+
+```{r, fig.align='center'}
+# histogram of education
+with(SwissLabor, hist(education, breaks='FD', xlim=c(0, 25), xlab = "education (in years)"))
+```
+
+The following two charts show histograms of individuals with young and old kids. A very large portion of the sample (over 600 individuals) has no young children, and a number of individuals have 1-2 young kids (no one has more than 3). In contrast, more of the sample seems to have older children, with around 400 having either 1-2 old kids and about another 400 with no old kids.
+
+```{r, fig.align='center'}
+par(mfrow = c(1,2))
+
+# histogram of number of young children
+with(SwissLabor, hist(youngkids))
+
+# histogram of number of old children
+with(SwissLabor, hist(oldkids))
+
+```
+
+Finally, we can look at a histogram of the logged non-labor income, shown below. As we might expect, the logged values are approximately normally distributed. There is also one major outlying value with a very low logged income value (around 7) relative to the distribution. 
+
+```{r, fig.align='center'}
+# histogram of log of yearly non-labor income
+with(SwissLabor, hist(income, breaks='FD', xlim = c(7, 13)))
+```
+
+In addition to histograms, we can look at a tabular breakdown of the Swiss women by foreign residency status and participation in the labor market. 
+
+```{r}
+# table of foreign status and participation
+foreign.table <- with(SwissLabor, table(participation, foreign))
+rownames(foreign.table) <- c("Participation: No", "Participation: Yes")
+colnames(foreign.table) <- c("Non-foreign resident", "Foreign resident")
+
+kable(foreign.table, caption = "Table of participation by foreigner status")
+
+
+# some calculation for absolute risk, odds ratio
+domestic <- foreign.table[2,1]/ sum(foreign.table[,1])
+foreign <- foreign.table[2,2]/ sum(foreign.table[,2])
+
+abs.risk.diff <- foreign - domestic
+rel.risk <- foreign/domestic
+
+odds <- (foreign.table[2,2]/ foreign.table[1,2]) / (foreign.table[2,1]/ foreign.table[1,1]) 
+```
+
+The table shows that the sample is biased towards individuals with non-foreign resident status, and that more individuals in the sample are participants than not. The table also suggests that odds of participating in the labor market are better if you are a foreigner, with an absolute probability improvement of 29%. However, we should probably be cautious about interpreting this data since it seems likely that foreigners without jobs may be harder to identify in this kind of survey. 
+
+#### 2. Logit regression and Bernoulli likelihood
+
+The logit (log odds) equivalent of the regression model can be written as:
+
+logit(p) = log$(\sf{\frac{p}{\sf{1-p}}})$ = $\eta(x)$ =
+
+$\sf{\beta_{0}}$ +  $\sf{\beta_{1}}$ * AGE +  $\sf{\beta_{2}}$ * AGESQ +  $\sf{\beta_{3}}$ * EDUC +  $\sf{\beta_{4}}$ * NYC +  $\sf{\beta_{5}}$ * NOC +  $\sf{\beta_{6}}$ * NLINC +  $\sf{\beta_{7}}$ * FOREIGN
+
+where p is the probability of participation in the labor market (participation = 1).
+
+
+Using the logit link function, we can write the Bernoulli likelihood function as:  
+
+L(p|$\sf{y_{i}}$) = $\Pi$ $(\sf{\frac{1}{1 + \sf{e^{-\eta(x)}}})^{yi}}$ $(\sf{1 - \frac{1}{1 + \sf{e^{-\eta(x)}}})^{1- yi}}$
+
+where $\eta(x)$ is equal to the log odds regression written above, and i represents each of the 872 individual observations. 
+
+
+The logit link function links the linear predictors in $\eta(x)$ to the predicted conditional mean using a non-linear transform. Rather than transforming the dependent variable itself, the link function is instead specifying the relationship between the "unobserved" or predicted conditional mean in the regression and the actual observed outcomes. It would be infeasible to take a logit transform of the dependent variable directly since for binary outcomes of 0 and 1 the logit function itself takes on values of negative infinity and positive infinity.   
+
+#### 3. Logistic regression
+
+We can run a logistic regression on the same model used by the author by using the logit link function instead of the probit. The resulting estimates and standard errors are shown in the table below. In addition, we can calculate the odds ratio associated with each of these coefficients by exponentiating each of the coefficients, shown in the third column of the table.
+
+```{r}
+# logistic regression
+logit.swiss <- glm(participation ~ age + agesq + education + youngkids + 
+                   oldkids + income + foreign, data=SwissLabor, 
+                   family = binomial(link = "logit"))
+
+table.logistic <- summary(logit.swiss)$coefficients[,1:2]
+
+# calculate odds ratios
+odds.ratio <- exp(summary(logit.swiss)$coefficients[,1])
+
+table.logistic <- cbind(table.logistic[,1], table.logistic[,2], odds.ratio)
+
+colnames(table.logistic) <- c("Regression estimates", 
+                              "Regression standard errors",
+                              "Associated odds ratios")
+
+# print table
+kable(table.logistic, digits = 4, caption = "Logistic regression results")
+```
+
+Neglecting the intercept and age coefficients for now, we can interpret these estimates and odds ratios as indicating that a one unit increase in one of the dependent variables increases the odds of participation by the amount of the coefficient. For example, the estimate for education indicates that for every additional year of education the odds are 1.03 more likely that an individual will be actively participating in the labor market. 
+
+For the foreign dummy variable (which is binary), we can interpet this estimate as indicating that being a permanent foreign resident makes it 3.21 more likely that the individual will be a participant in the labor market as compared to a domestic resident (at least in this sample).
+
+The following graph shows a plot of the predicted probability of labor force participation as a function of the age (in decades) of the individuals, holding the other variables at their mean values and using expected value for the foreigner status.
+
+```{r}
+# logistic regression
+logit.swiss <- glm(participation ~ age + agesq + education + youngkids + 
+                   oldkids + income + foreign, data=SwissLabor, 
+                   family = binomial(link = "logit"))
+
+# plot predicted probabilities for age
+participation <- mapvalues(SwissLabor$participation, c("no", "yes"), c(0,1))
+participation <- as.numeric(levels(participation))[participation]
+
+# plot points by age and participation
+plot(jitter(SwissLabor$age), jitter(participation, amount = 0.025),
+     xlab = "Age (decades)",
+     ylab = "Predicted Probability of participation",
+     ylim = c(-.2, 1.2),
+     pch  = 16,
+     cex = 0.6,
+     col  = rgb(0, 0, 0, .3))
+
+# find means of other variables
+educ.mean <- mean(SwissLabor$education)
+youngkids.mean <- mean(SwissLabor$youngkids)
+oldkids.mean <- mean(SwissLabor$oldkids)
+income.mean <- mean(SwissLabor$income)
+
+# convert factor foreign into dummy variable
+SwissLabor$foreign.dummy <- mapvalues(SwissLabor$foreign, c("no", "yes"), c(0, 1))
+SwissLabor$foreign.dummy <- as.numeric(levels(SwissLabor$foreign.dummy))[SwissLabor$foreign.dummy]
+
+# calculate expected value for foreign
+foreign.mean <- mean(SwissLabor$foreign.dummy)
+
+# Add curve of predicted probabilities
+curve(1/(1 + exp(-(coef(logit.swiss)[1] +
+                   coef(logit.swiss)[2]*x +
+                   coef(logit.swiss)[3]*x^2 +
+                   coef(logit.swiss)[4]*educ.mean+
+                   coef(logit.swiss)[5]*youngkids.mean+
+                   coef(logit.swiss)[6]*oldkids.mean +
+                   coef(logit.swiss)[7]*income.mean +
+                   coef(logit.swiss)[8]*foreign.mean))),
+      col = rgb(0, 0, 0, 1), add = TRUE, lwd = 2)
+```
+
+As the plot shows, the logistic model anticipates a non-linear relationship between age and predicted probability of participation. Probability increases with age up to around 3 decades, and then levels off and begins to decrease after 4 decades. This is somewhat intuitive since we might expect that people with more experience might find it easier to find a job and that people of older ages may be retired or not looking for work.  
+
+
+#### 4. Calibration table
+
+We can create a calibration table to show how well our logistic regression predicts the actual outcomes in the data. To create this table, we split the observed and predicted data in deciles and compare participation rates across the two. These values for each decile and the associated probability cut points are displayed below. Because the data is not evenly divisible by 10, there is a bit of unevenness in the total of each decile, but this is fairly small. 
+
+```{r}
+# calibration table code
+
+probit.swiss <- glm(participation ~ age + agesq + education + youngkids + 
+                 oldkids + income + foreign, data=SwissLabor, 
+                 family = binomial(link = "logit"))
+
+# get the raw fitted probabilities
+SwissLabor$probs <- predict(probit.swiss, type = "response")
+# Get the deciles of the fitted probabilities
+decile.cutpoints <- quantile(SwissLabor$probs, probs = seq(0, 1, .1))
+
+# Identify decile of each fitted probability
+SwissLabor$decileID <- cut(SwissLabor$probs,
+                           breaks = decile.cutpoints,
+                           labels = 1:10,
+                           include.lowest = TRUE)
+
+# Calculate the number that switched in each decile
+decile.table <- table(SwissLabor$decileID, SwissLabor$participation)
+observed.partic <- as.data.frame.matrix(decile.table)
+
+
+# calculate expected values for each decile (sum of probabilities)
+expected.partic <- tapply(SwissLabor$probs, SwissLabor$decileID, FUN = sum)
+
+
+## Create a summary calibration table
+
+# Create cutpoints that represent the 9 intervals that exist for deciles
+interval.cutpoints <- round(quantile(SwissLabor$probs, probs = seq(.1, 1, .1)), 2)
+
+# Create a dataframe with these cutpoints:
+cal.table <- data.frame(interval.cutpoints)
+
+# Add a column of observed switches
+cal.table$observed.partic <- observed.partic[, 2]
+
+# Add a column of expected switches
+cal.table$expected.partic <- round(expected.partic, 0)
+
+# Add columns for observed and expected non-switches:
+cal.table$observed.exclud <- observed.partic[ , 1]
+cal.table$expected.exclud <-round(nrow(SwissLabor)/10 - expected.partic, 0)
+
+# Add a column for the total # of observations in each decile
+cal.table$total <- table(SwissLabor$decileID)
+
+colnames(cal.table) <- c("Interval cut point", "Observed participant", 
+                         "Expected participant", "Observed non-participant", 
+                         "Expected non-participant", "Total")
+kable(cal.table, type = 'rmarkdown', 
+      caption = "Observed and expected participation by decile")
+
+```
+
+The table shows that the model is fairly accurate, with relatively small discrepencies between the expected and observed participation values. The model seems to be most accurate at the tails of the population, with the largest number of errors in the middle deciles. It seems like the model does equally worse with its predictions of non-participants and participants, with a maximum error of 6 at the 60% percentile for both types.
+
+We can also look at how the predicted probabilities compare to the observed relative frequencies for the deciles in a calibration plot, shown below. The plot shows that the deciles line up fairly closely the diagonal line, with the only major deviation from the line at the sixth decile. Overall, the plot seems to suggest that the model is relatively well specified.
+
+```{r}
+# calibration plot
+expected.relative.freq <- cal.table[,3]/(cal.table[,3] + cal.table[,5])
+observed.relative.freq <- cal.table[,2]/(cal.table[,2] + cal.table[,4])
+plot(expected.relative.freq, observed.relative.freq,
+     xlim = c(0,1), ylim = c(0,1),
+     xlab = "Predicted probabilities",
+     ylab = "Observed relative frequencies",
+     main = "Calibration plot")
+abline(0,1)
+
+```
+
+#### 5. Model comparison with GAM
+
+We can test the effectiveness of our logistic regression by comparing the fit of a generalized additive model (GAM) across key variables in the model. For the GAM, we remove the age squared term from the original logistic regression and apply smoothing to the age and education variables to try to identify if any transformations are needed. The partial residual plots for GAM on age and educations are shown below.
+
+
+```{r}
+# GAM 
+par(mfrow = c(1,2))
+
+# generalized additive model (take out age squared term)
+gam.swiss <- gam(participation ~ s(age) + s(education) + 
+                youngkids + oldkids + income + foreign,
+                data = SwissLabor,
+                family = binomial(link = "logit"))
+
+# partial residual plots
+plot(gam.swiss, residuals = TRUE, shade = TRUE)
+```
+
+The partial residual plot for age resembles an inverted parabola and is certainly non-linear, implying that a transformation of the age variable is needed. For education, the partial residual plot has a slight dip in the middle but is otherwise relatively linear, suggesting that this variable is not as badly in need of a transformation. For age, the appropriate transformation seems like it will be quadratic given the parabolic shape of the curve. 
+
+#### 6. Stukel's test
+
+To further evaluate the logistic regression and the GAM, we can use Stukel's test to see the appropriateness of the logit link function. The table below shows the alpha 1 and alpha 2 values for both the logistic regression and the GAM. 
+
+```{r}
+## Stukel's test
+
+# logistic regression
+logit.swiss <- glm(participation ~ age + agesq + education + youngkids + 
+                   oldkids + income + foreign, data=SwissLabor, 
+                   family = binomial(link = "logit"))
+
+eta.hat <- predict(logit.swiss)
+positive <- ifelse(eta.hat >= 0, 1, 0)
+negative <- ifelse(eta.hat < 0, 1, 0)
+eta.hat.sq <- eta.hat^2
+
+stukel.logit <- glm(participation ~ age + agesq + education + youngkids + 
+                    oldkids + income + foreign + 
+                    eta.hat.sq:positive + eta.hat.sq:negative, 
+                    data = SwissLabor,
+                    family = binomial(link = "logit"))
+# extract alphas
+alpha1.logit <- 2 * summary(stukel.logit)$coef[9,1]
+alpha2.logit <- -2 * summary(stukel.logit)$coef[10,1]
+
+# generalized additive model 
+gam.swiss <- gam(participation ~ s(age) + s(education) + 
+                youngkids + oldkids + income + foreign,
+                data = SwissLabor,
+                family = binomial(link = "logit"))
+
+eta.hat.g <- predict(gam.swiss)
+positive.g <- ifelse(eta.hat.g >= 0, 1, 0)
+negative.g <- ifelse(eta.hat.g < 0, 1, 0)
+eta.hat.sq.g <- eta.hat.g^2
+
+stukel.gam <- gam(participation ~ s(age) + s(education) + 
+                youngkids + oldkids + income + foreign + 
+                eta.hat.sq.g:positive.g + eta.hat.sq.g:negative.g,
+                data = SwissLabor,
+                family = binomial(link = "logit"))
+                    
+                    
+# extract alphas
+alpha1.gam <- 2 * coef(stukel.gam)[6]
+alpha2.gam <- -2 * coef(stukel.gam)[7]
+
+alphas <- rbind(c(alpha1.logit, alpha2.logit),
+                c(alpha1.gam, alpha2.gam))
+
+colnames(alphas) <- c("alpha 1", "alpha 2")
+rownames(alphas) <- c("Logit link", "GAM")
+
+kable(alphas)
+```
+
+For the logistic regression, both alpha 1 and alpha 2 two are positive, indicating that the data has tails that are thinner than the logistic function. The same is true for the GAM, which lacks the age squared term and is thus havs alpha values that are further away from what we would expect for a logistic regression. The GAM has fairly large alpha values, suggesting that logit link doesn't work well here and affirming the need for a transformation as identified above.
+
+The alpha 2 value for the logistic regression is pretty close to 0, which is appropriate for logistic regression. The alpha 1 value is a bit larger (0.7), so perhaps logit is not the best link function in this case, although it's not clear what other link function might be better. With an alpha 2 value very close to 0.165, the author's choice a probit model may be more appropriate than the logit. 
+
+#### 7.  Cross-Validated ROC
+
+The receiver operating curve (ROC) reflects the models' true positive rate (sensitivity) and false positive rate (1 - specificity). For this step, I compared two logistic regressions with and without the squared transformation on age, plotting the cross-validated ROC curves using 3-fold evaluation. The two ROCs can be seen below. 
+
+```{r}
+
+# Create an empty data frame to store the predictions 
+predictions <- data.frame(rep(NA, round(nrow(SwissLabor)/3)))
+# Remove the column of NAs
+predictions <- predictions[, -1]
+# Create an empty data frame to store the actual outcomes
+labels <- data.frame(rep(NA, round(nrow(SwissLabor)/3)))
+# Remove the column of NAs
+labels <- labels[, -1]
+
+# create additional prediction vector for complex model
+predictions.trans <- predictions
+
+for(i in 1:1000) {
+  # Take a random sample, without replacement from 4/5 of the rows
+  samp1 <- sample(rownames(SwissLabor), round(2*nrow(SwissLabor)/3), replace = FALSE)
+  # Training data takes the sampled rows
+  training <- SwissLabor[samp1, ]
+  # Test data takes the remaining rows
+  testing <- SwissLabor[setdiff(rownames(SwissLabor), samp1), ]
+  
+  # Run glm on training data (untransformed)
+  glm.train <- glm(participation ~ age + education + youngkids + 
+                   oldkids + income + foreign, 
+                   data = training,
+                   family = binomial(link = "logit"))
+      
+  # Make probability predictions for test data
+  glmpred <- predict(glm.train, testing, type = "response")
+  # Add the predictions for this iteration to the data frame
+  predictions <- cbind(predictions, glmpred)
+  # Add the actual outcomes for this iteration to the data frame
+  labels <- cbind(labels, testing$participation)
+  
+  
+  # test transformed model  
+  glm.train2 <- glm(participation ~ age + agesq + education + youngkids + 
+                   oldkids + income + foreign, 
+                   data = training,
+                   family = binomial(link = "logit"))
+  
+  # Make probability predictions for test data
+  glmpred2 <- predict(glm.train2, testing, type = "response")
+  # Add the predictions for this iteration to the data frame
+  predictions.trans <- cbind(predictions.trans, glmpred2)
+}
+
+cvdata <- list(predictions, labels)
+cvdata2 <- list(predictions.trans, labels)
+
+
+# Run the ROCR prediction and performance measures
+glmerr <- prediction(cvdata[[1]], cvdata[[2]])
+glmperf <- performance(glmerr, measure="tpr", x.measure="fpr")
+# This gives a vector of AUCs
+glmauc <- performance(glmerr, measure = "auc")
+# Unlist the AUCs
+glmauc <- unlist(glmauc@y.values)
+# Take the average
+glmauc <- mean(glmauc)
+
+
+plot(glmperf,
+     col = "blue",
+     main = "Cross-Validated ROC Curves",
+     avg = 'threshold',
+     #spread.estimate  = 'stddev',
+     print.cutoffs.at = seq(.0, .9, by = 0.1),
+     text.adj = c(-.5, 1.2),
+     xlab  = "Average False Positive Rate",
+     ylab = "Average True Positive Rate")
+abline(0, 1)
+
+
+
+## repeat ROC analysis for transformation
+
+# Run the ROCR prediction and performance measures
+glmerr2 <- prediction(cvdata2[[1]], cvdata2[[2]])
+glmperf2 <- performance(glmerr2, measure="tpr", x.measure="fpr")
+# This gives a vector of AUCs
+glmauc2 <- performance(glmerr2, measure = "auc")
+# Unlist the AUCs
+glmauc2 <- unlist(glmauc2@y.values)
+# Take the average
+glmauc2 <- mean(glmauc2)
+
+
+plot(glmperf2,
+     col = "red",
+     main = "Cross-Validated ROC Curves",
+     avg = 'threshold',
+     #spread.estimate  = 'stddev',
+     print.cutoffs.at = seq(.0, .9, by = 0.1),
+     text.adj = c(-.5, 1.2),
+     xlab  = "Average False Positive Rate",
+     ylab = "Average True Positive Rate",
+     add = TRUE)
+abline(0, 1)
+
+```
+
+Comparing the two ROCs, we can see that the second model with the squared age term (the red curve) is entirely above the model without this transformation (in blue). This means that the model with the transformation has a higher true positive rate for every false positive rate when compared to the model without the transformation. This indicates that the second model performs better, although the difference may be relatively small in this case. 
+
+#### 8. Statistical and causal inference stories
+
+For the statistical inference story, we need to consider the population of interest and the sampling method. In terms of population, this sample only includes Swiss women of working age (20-62), which already limits the extent to which we can make any more general claims. For example, we would probably not want to try to generalize our findings to individuals outside of Switzerland or even to males in Switzerland. 
+
+More importantly, we don't know a whole lot about the sampling method. The data was drawn from a "representative" health survey conducted in Switzerland and Germany. It may be the fact that this survey sampling method is fairly robust and representative of Swiss women, but we would need to pursue this more closely before making any strong inference statements. One important fact to consider, for example, is how the survey participants were contacted. The data shows a high proportion of foreigners participating in the labor market, but this may be a result of bias since foreigners without jobs may be harder to find (and illegal immigrants looking for work will likely not be included) and that foreigners in general may be underrepresented.
+
+In terms of causal inference, there are a number of plausible stories suggested by the data analysis here. We might look at age and conlcude that older women have better participation rates (at least up to a point), or that higher education levels increase participation, or that individuals with children are less likely to be working. While all of these are reasonable theories, attributing causality definitively is a much harder task because we are using hedonic data and not a randomized control trial. With this real world data, it is likely that several of the factors (for example, kids and non-labor income) covary, which may confound our causal explanation. 
+
+In addition, we cannot be certain that there aren't omitted variables that serve as more powerful explanatory variables but that aren't captured in the model. Without a randomized controlled trial (which is impossible in this case since we can't assign number of children and age to individuals), we can thus only suggest plausible causal explanations as opposed to attributing causality more strongly.
+
+#### Data Citation
+
+Gerfin, Michael. "Parametric and Semi-Parametric Estimation of the Binary Response Model of Labour Market Participation". Journal of Applied Econometrics, Vol. 11, No. 3 (May - Jun., 1996), pp. 321-339
+
+
+```{r, eval=FALSE}
+# plot predicted probabilities for age
+participation <- mapvalues(SwissLabor$participation, c("no", "yes"), c(0,1))
+participation <- as.numeric(levels(participation))[participation]
+
+prob <- predict(logit.swiss, type = "response")
+resids <- (participation - prob)/sqrt((prob*(1-prob)))
+# Component is just xB
+component <- coef(logit.swiss)[2]*SwissLabor$age + coef(logit.swiss)[3]*SwissLabor$agesq 
+# Component plus residual
+cpr <- resids + component
+# Component-plus-residual plot
+
+scatter.smooth(SwissLabor$age, cpr,
+       ylab = "Component plus residual",
+       xlab = "Age (in decades)",
+       pch = 19,
+       col = rgb(0, 0, 0, .3))
+```
