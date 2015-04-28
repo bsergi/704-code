@@ -1,0 +1,806 @@
+---
+title: "HW5"
+author: "Brian Sergi"
+date: "April 18, 2015"
+output: html_document
+---
+
+```{r global_options, include=FALSE}
+# global kitting options for report output
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE, fig.align='center')
+```
+
+```{r}
+# load packages
+library(AER)
+library(knitr)
+library(mlmRev)
+library(arm)
+library(HLMdiag)
+library(sandwich)
+library(lmtest)
+library(multiwayvcov)
+library(xtable)
+
+# load data
+data("Exam", package = "mlmRev")
+````
+
+
+### Data Summary
+
+This homework analyzes a dataset on the standardized test scores of 4,059 students from 65 schools in London. The dataset includes (among others) the following variables:
+
+* school - student's school by id number
+* normexam - normalized score of the student on the General Certificate of Secondary Education (GCSE) examination at age 16
+* schgend - school gender type (mixed, boys, or girls)
+* type - school type (mixed or single gender)
+* schavg - average London Reading Test (LRT) intake score for the school
+* standLRT - standardized score of the student on the LRT at age 11
+* sex - gender of the student (male or or female)
+
+#### 1. Histograms and tables
+
+The following histogram shows the frequency of schools by number of students. We can see from the plot that most schools fall in the range of having about 30-80 students, although there is a fair amount of variation and a relatively heavy right tail. There also seem to be some interesting outliers with low or high numbers of studenst. For example, school number 14 has 198 students while school number 48 has only 2 students. This may provide some skewing effects on the school LRT average variable later on in the analysis.
+
+```{r}
+#histogram of number of students in each school
+hist(with(Exam, table(school)), breaks = 'FD',
+     xlab = "Students",
+     ylab = "Frequency (number of schools)",
+     main = "Histogram of number of students by school")
+```
+
+The next histogram shows the breakdown of students by their score on the GCSE (the normexam variable). Since the data is normalized, we would expect the scores to be normally distributed with mean zero, and based on the histogram this appears to be the case in reality. 
+
+```{r}
+# histogram of GCSE scores
+hist(Exam$normexam, breaks = "FD", 
+     xlab = "Normalized GCSE score",
+     ylab = "Frequency (number of students)",
+     main = "Histogram of normalized GCSE scores")
+```
+
+The following plot shows a histogram for the school-wide average LRT scores of the 65 schools in the data set. The data is somewhat distributed normally but is noticeably "lumpier" than the distribution for the scores by student. In addition, we can see a large spike to the left of zero and a heavier, longer left tail, suggesting that there is a skew towards school with averages below the zeroed mean. However, this data does not show how many students are in each school. 
+
+```{r}
+# pull out school averages (1 for each school)
+averages <- unique(Exam$schavg)
+
+hist(averages, breaks = "FD", 
+     xlim = c(-1, 1), xlab = "School LRT normalized average",
+     ylim = c(0, 20), ylab = "Frequency (number of schools)",
+     main = "Histogram of school LRT averages")
+```
+
+In contrast, we can look at the distribution of the standardized LRT scores by student, shown in the histogram below. In this case, we can see the normal distribution is more faithfully represented.
+
+```{r}
+# histogram of standard LRT score
+hist(Exam$standLRT, breaks = "FD",
+     xlab = "Standardized LRT score",
+     ylab = "Frequency (number of students)",
+     main = "Histogram of student LRT scores")
+```
+
+In comparing the standardized LRT scores by school and student, we can also see that the range of scores is much wider for students (+/- 3) than for school averages (+/- 1). This suggests that the schools are somewhat well mixed since low-scoring students average out with higher scoring ones. However, perfect mixing would imply that all schools have an average at the mean (0).
+
+
+The following tables summarize the information on student gender and school type. The first table shows the total breakdown of students by gender. We can see that the dataset has 813 more females than males. 
+
+```{r}
+# table of student genders
+gender <- xtable(with(Exam, table(sex)))
+rownames(gender) <- c("Female", "Male")
+colnames(gender) <- "Gender"
+kable(gender, caption = "Number of students by gender")
+```
+
+From the table of school gender types, we can see that there are 35 co-ed schools and 30 single-sex schools, 10 of which are boys' schools and 20 of which are girls' schools. The larger number of all girls school may suggest one reason why the dataset has more girls than boys, although there are a number of reasons that this could be the case.
+
+```{r}
+# table of school gender types
+
+# extract unique school rows
+schools <- Exam[!duplicated(Exam$school),]
+
+# create table
+school.gend <- xtable(table(schools$schgend))
+colnames(school.gend) <- "Number of schools"
+rownames(school.gend) <- c("Mixed", "Boys", "Girls")
+kable(school.gend, caption = "Number of schools by gender type")
+```
+
+Next, we can look at tables of the students' intake test scores. The table below shows the breakdown of students score for both the verbal reason subscore and the overall exam, both by scoring category (bottom 25%, middle 50%, top 25%). 
+
+```{r}
+# LRT vr subscores
+vr <- table(Exam$vr)
+# total intake score
+total <- table(Exam$intake)
+
+scores <- rbind(vr, total)
+rownames(scores) <- c("Verbal reasoning", 
+                      "Total")
+kable(scores, caption = "Students by LRT intake score category")
+```
+
+The tables show some interesting comparisons. We can see, for example, that students' scores tend to be much higher for the verbal reasoning subsection of the test than for the overall test. This suggests that students' school much more poorly on other sections of the test (presumably math). This skew might suggests some problems with using the LRT intake score for the analysis without knowing more about the test itself.  
+
+#### 2. Regressions
+
+Next we can estimate the intercept for complete pooling, no pooling, and partial pooling regressions. A summary of the various regressions can be found in the table below. The no pooling intercept values were calculated by taking the mean of the intercept values for the 65 estimates provided (1 for each school).
+
+```{r}
+# complete pooling (data analyzed at student level with regard to school)
+complete.pool <- lm(normexam ~ 1, data = Exam)
+cp <- summary(complete.pool)$coef
+
+# no pooling (data analyzed separately for each school)
+no.pool <- lm(normexam ~ factor(school) - 1, data = Exam)
+np <- apply(summary(no.pool)$coef[,1:3], MARGIN=2, FUN=mean)
+
+# partial pooling
+partial.pool <- lmer(normexam ~ 1 + (1|school), data = Exam)
+pp <- summary(partial.pool)$coef
+
+# display regressions
+pools <- rbind(cp[1:3], np, pp)
+rownames(pools) <- c("complete pooling", "no pooling (mean)", "partial pooling")
+kable(pools)
+```
+
+All of estimates are slighly negative, indicating the means are on the low side of the normalized mean. The intercept estimate for complete pooling is very close to zero, which is what we would expect since we are dealing with normalized exam scores. In contrast, the average of the no pooled intercepts is a bit farther from zero. This analysis treats each school equally regardless of size, so we would expect this result to be less accurate. The partially pooled intercept is in between the complete pooled intercept and the average for the no pooled intercepts.  
+
+We can also look at the distribution of the no pooled and partially pooled school intercepts, using random effects to calculate the partially pooled values. The table below provides summary statistics for the no pooled intercepts and partially pooled random effects for each school, and shows that no pooling estimates have a slighly larger spread than the partially pooled ones.
+
+```{r}
+# look at summary statistics
+no.pool <- lm(normexam ~ factor(school) - 1, data = Exam)
+partial.pool <- lmer(normexam ~ 1 + (1|school), data = Exam)
+
+no.pool.stats <- c(min(coef(no.pool)), mean(coef(no.pool)), max(coef(no.pool)))
+
+# pull out partial pooling estimates using ranef
+partial.int <- fixef(partial.pool)[1] + as.matrix(ranef(partial.pool)$school)
+partial.stats <- c(min(partial.int), mean(partial.int), max(partial.int))
+
+pool.comp <- rbind(no.pool.stats, partial.stats)
+
+rownames(pool.comp) <- c("No pooling", "Partial pooling")
+colnames(pool.comp) <- c("Min", "Mean", "Max")
+
+kable(pool.comp)
+```
+
+We can also compares the distribution of the intercepts using qqplots, shown for no pooling and partially pooling below. The qqplots are relatively similar, and both show some large deviations from the normal distribution at the high end.
+
+```{r}
+#qqplot
+par(mfrow = c(1,2))
+qqPlot(coef(no.pool), main = "QQ-plot\nno pooling", ylab = "No ")
+qqPlot(coef(partial.pool)$school, main = "QQ-pplot\n partial pooling")
+```
+
+
+
+```{r}
+# fitted intercept for random school
+set.seed(1)
+school <- sample(1:65, 1)
+fixed <- fixef(partial.pool)[1]
+random <- as.matrix(ranef(partial.pool)$school)[school]
+
+partial.int <- fixef(partial.pool)[1] + as.matrix(ranef(partial.pool)$school)[school]
+
+```
+
+Finally, we can look at the intercept for an example school. The intercept for school `r school` is:   
+                               = $\sf{\alpha_{j}}$ + $\sf{u_{j}}$    
+                               = `r fixed` + `r random`   
+                               = `r partial.int`  
+
+#### 3. Partial pooling
+
+For the previous regression, the partially pooled school intercept will be closer to the complete pooling estimate if the school has a small sample size (i.e. small number of students). In contrast, if the school has a large number of students, then the estimated intercepted will be closer to the no pooling intercept for that school. 
+
+#### 4. Pooling with a predictor
+
+Next we can add the student's LRT score as a predictor to our model. The table below compares the intercept values of the old model with the new model that includes standLRT as a predictor. 
+
+```{r}
+# complete pooling (data analyzed at student level)
+complete.pool2 <- lm(normexam ~ standLRT, data = Exam)
+cp2 <- summary(complete.pool2)$coef[1]
+
+# no pooling (data analyzed separately for each school)
+no.pool2 <- lm(normexam ~ factor(school) - 1 + standLRT, data = Exam)
+np2 <- mean(summary(no.pool2)$coef[-66,1])
+
+# partial pooling
+partial.pool2 <- lmer(normexam ~ standLRT + (1|school), data = Exam)
+pp2 <- (summary(partial.pool2)$coef[1])
+
+pools2 <- c(cp2, np2, pp2)
+
+# compare to origonal intercepts
+comp <- cbind(pools[,1], pools2)
+rownames(comp) <- c("complete pooling", "no pooling (mean)", "partial pooling")
+colnames(comp) <- c("Intercept only", "Intercept + LRT regressor")
+kable(comp)
+```
+
+The table shows that including standLRT as predictor in the model greatly reduces the deviation from zero for the no pooled and partially pooled intercepts. Interestingly, the partially pooled intercept has switched signs, although the value is still close to zero.
+
+We can also compare the regression in terms of the estimate for the slope (standLRT term), shown in the table below. The table shows the complete pooling estimate is the largest, and that the partial pooling value is between the complete and no pooling estimates. 
+
+
+```{r}
+# compare regressions
+cp.slope <- summary(complete.pool2)$coef[2,1:3]
+np.slope <- summary(no.pool2)$coef[66,1:3]
+pp.slope <- summary(partial.pool2)$coef[2,1:3]
+
+slopes <- rbind(cp.slope, np.slope, pp.slope)
+rownames(slopes) <- c("Complete pooling", "No pooling", "Partial pooling")
+kable(slopes, format='markdown', main="Estimate of standLRT")      
+```
+
+We can see from the table that the slopes are different between the complete and no pooling models, indicating that there indeed is some correlation between the school level intercepts for the normalized exam and the standardized intake LRT score. 
+
+#### 5. Group-level predictor
+
+Next, we can add the school wide average for LRT intake score as a group-level predictor for a multi-level model. The table below shows the regression output.
+
+```{r}
+# partial pooling, no group predictor
+partial.pool <- lmer(normexam ~ standLRT + (1|school), data = Exam)
+
+# multi-level model with group predictor
+partial.pool.group <- lmer(normexam ~ standLRT + schavg + (1|school), data = Exam)
+
+kable(summary(partial.pool.group)$coef)
+```
+
+Comparing the standard deviations of the two models, we can see that the standard of the intercept decreases from `r round(summary(partial.pool)$coef[1,2], 4)` to `r round(summary(partial.pool.group)$coef[1,2],4)` when we add the group level predictor, suggesting that the predictor is helping to increase the accuracy of the model.
+
+The following two plots shows regression sof average LRT test scores (schavg) against the no pooled and patially pooled intercepts, respectively. 
+
+```{r, fig.width=8}
+# regression plots
+par(mfrow = c(1,2))
+
+# extract school averages for LRT intake
+schavg <- unique(Exam$schavg[order(Exam$school)])
+
+# use previous no pool for regression (can't add group level predictor)
+no.pool2 <- lm(normexam ~ factor(school) - 1 + standLRT, data = Exam)
+
+# remove standLRT estimate
+np.int <- summary(no.pool2)$coef[-66,1]
+
+lm.schavg.np <- lm(schavg ~ np.int)
+plot(schavg, np.int,
+     pch = 20,
+     ylim = c(-1, 1),
+     ylab = "School LRT average",
+     xlab = "No pooling intercepts",
+     main = "School average LRT \nvs. no pooling intercepts")
+abline(lm.schavg.np , col = 'blue')
+
+# partial pooling
+partial.pool3 <- lmer(normexam ~ standLRT + schavg + (1|school), data = Exam)
+
+# calculate partially pooled intercepts
+partial.int <- fixef(partial.pool3)[1] + 
+               unlist(ranef(partial.pool3)) + 
+               fixef(partial.pool3)[3]*schavg
+
+# regress school average and partial intercepts
+lm.schavg.pp = lm(schavg ~ partial.int)
+plot(schavg, partial.int,
+     pch = 20,
+     ylim = c(-1, 1),
+     ylab = "School LRT average",
+     xlab = "Partial pooling intercepts",
+     main = "School average LRT \nvs. partial pooling intercepts")
+abline(lm.schavg.pp, col = 'red')
+```
+
+The regressions show that the points are more closely clustered around the expected regression line for the partiall pooling intercepts than for the no pooling ones. This indicates that the group-level predictor (school average LRT) should help reduce variability in the normalized exam scores.
+
+
+```{r}
+## example regression line for random school
+
+# pick random school
+set.seed(1)
+school <- sample(1:65, 1)
+
+# intercept
+school.int <- fixef(partial.pool3)[1] + 
+               unlist(ranef(partial.pool3))[school] + 
+               (fixef(partial.pool3)[3]*schavg)[school]
+
+# standLRT coefficient
+school.slope <- summary(partial.pool3)$coef[3]
+
+```
+
+We can write out the fitted regression line for one of the schools according to the following model:      
+Normexam = $\sf{\alpha_{j}}$ + $\sf{u_{j}}$ + $\sf{\beta_{j}}$ * standLRT
+
+where $\sf{u_{j}}$ includes both the school specific random effect and the group level predictor (aka school average).
+
+Regression for school `r school`: Normexam = `r round(school.int, 3)` + `r round(school.slope, 3)` * standLRT
+
+#### 6. Vary predictor at the school level
+
+The next functionality we can add to the model is to allow the slopes of the standLRT predictor to vary by school. The table belows displays the overall regression results for this multi level model.
+
+```{r}
+# multi-level model with group predictor
+partial.pool4 <- lmer(normexam ~ standLRT + schavg + (1 + standLRT|school), data = Exam)
+
+kable(summary(partial.pool4)$coef)
+```
+
+
+```{r}
+# pick random school
+set.seed(1)
+school <- sample(1:65, 1)
+
+# intercept
+school.int <- fixef(partial.pool4)[1] + 
+               (ranef(partial.pool4))[[1]][,1][school] + 
+               (fixef(partial.pool4)[3]*schavg)[school]
+
+# standLRT coefficient
+school.slope <- summary(partial.pool4)$coef[3] + ranef(partial.pool4)[[1]][,2][school]
+```
+
+Comparing this model to our previous one, we can see that the intercept has moved closer to the expected mean of zero. The slope for standLRT estimate has decreased slighly while the slope estimate for schavg has dropped by an even greater amount. 
+
+
+As before, we can write out the fitted regression line for one of the schools according to the following model: $\sf{\alpha_{j}}$ + $\sf{u_{j}}$ + $\sf{\beta_{j}}$ * standLRT + $\sf{s_{j}}$ * standLRT
+
+where $\sf{u_{j}}$ includes both the county specific random effect and the group level predictor (school average).
+
+Regression for school `r school`: Normexam = `r round(school.int, 3)` + `r round(school.slope, 3)` * standLRT
+
+Comparing the standard deviations (which are related to the variances) of the new model to our previous one, we can see that the varying slopes model slightly decreases the standard deviation, suggesting an improvement in the specification of the model. 
+
+```{r}
+# variance components
+partial.pool4 <- lmer(normexam ~ standLRT + schavg + (1 + standLRT|school), data = Exam)
+partial.pool3 <- lmer(normexam ~ standLRT + schavg + (1|school), data = Exam)
+
+vars <- rbind(summary(partial.pool3)$coef[,2], summary(partial.pool4)$coef[,2])
+rownames(vars) <- c("Group level predictor only","Varying slopes model")
+kable(vars)
+```
+
+
+#### 7. Level 1 Diagnostics
+
+To investigate model mispecifciations, we can first look at the level 1 diagnostics for our model. The four plots below look at the residuals against fitted values, standardized LRT scores, and school average LRT scores, as well as the qqplot.
+
+```{r, message=FALSE}
+level1 <- lm(normexam ~ standLRT + schavg, data = Exam)
+
+plot(fitted(level1), rstudent(level1),
+     xlab = "Fitted Values",
+     ylab = "Jackknife LS Residuals",
+     pch = 19,
+     col = rgb(0, 0, 0, .3))
+
+lines(lowess(fitted(level1), rstudent(level1)),
+      col = "green", lwd = 2)
+abline(h = 0, lty = 2, col = "red", lwd = 2)
+
+plot(Exam$standLRT, rstudent(level1),
+     xlab = "Standarized LRT score Level",
+     ylab = "Jackknife LS Residuals",
+     pch  = 19,
+     col  = rgb(0, 0, 0, .3))
+lines(lowess(Exam$standLRT, rstudent(level1)),
+      col = "green", lwd = 2)
+abline(h = 0, lty = 2, col = "red", lwd = 2)
+
+plot(Exam$schavg, rstudent(level1),
+     xlab = "School average LRT score",
+     ylab = "Jackknife LS Residuals",
+     pch  = 19,
+     col  = rgb(0, 0, 0, .3))
+lines(lowess(Exam$schavg, rstudent(level1)),
+      col = "green", lwd = 2)
+abline(h = 0, lty = 2, col = "red", lwd = 2)
+
+qqPlot(level1,
+       distribution = "t",
+       df = df.residual(level1),
+       ylab = "Jackknife LS Residuals")
+
+```
+
+The plots show that overall the model seems pretty decently specified. There is some deviation from the expected zero trend line at the low and high ends of the model. However, there doesn't seem to be too much heteroskedasticity to be concerned with. 
+
+We can explore potential transformations for the dependent variable by looking at the BoxCox results, shown below. The maximum log likelihood function gives a lambda of 1, suggesting that no transformation of the dependent variable is necessary (since normexam is already normalized, this is what we would expect).
+
+```{r}
+# explore potential transformations
+
+# dependent variable
+boxCox(normexam ~ standLRT + schavg, data = Exam, family = "yjPower")
+
+```
+
+The standardized LRT schools and school averages are already normalized, so we wouldn't necessarily expect to need to transform these variables. However, one transformation when can explore is interacting the school average with the standardized LRT term. The diagnostic plots for the model with this interaction are shown below. 
+
+```{r}
+level1 <- lm(normexam ~ standLRT + schavg + standLRT*schavg, data = Exam)
+
+plot(fitted(level1), rstudent(level1),
+     xlab = "Fitted Values",
+     ylab = "Jackknife LS Residuals",
+     pch = 19,
+     col = rgb(0, 0, 0, .3))
+lines(lowess(fitted(level1), rstudent(level1)),
+      col = "green", lwd = 2)
+abline(h = 0, lty = 2, col = "red", lwd = 2)
+
+plot(Exam$standLRT, rstudent(level1),
+     xlab = "Standarized LRT score Level",
+     ylab = "Jackknife LS Residuals",
+     pch  = 19,
+     col  = rgb(0, 0, 0, .3))
+lines(lowess(Exam$standLRT, rstudent(level1)),
+      col = "green", lwd = 2)
+abline(h = 0, lty = 2, col = "red", lwd = 2)
+
+plot(Exam$schavg, rstudent(level1),
+     xlab = "School average LRT score",
+     ylab = "Jackknife LS Residuals",
+     pch  = 19,
+     col  = rgb(0, 0, 0, .3))
+lines(lowess(Exam$schavg, rstudent(level1)),
+      col = "green", lwd = 2)
+abline(h = 0, lty = 2, col = "red", lwd = 2)
+
+qqPlot(level1,
+       distribution = "t",
+       df = df.residual(level1),
+       ylab = "Jackknife LS Residuals")
+```
+
+As we can see, there is some improvement in the tails of the distribution and a reduction in their deviation from zero. Since school average is the mean of the standLRT scores for the students at a given school, this is akin to replicating a multi-level model with school average as a group level predictor. Accordingly, the level 1 diagnostics suggest that the only main transformatio need is the use of a multi-level model.
+
+To confirm this, we can look at an influence plot for this model. The plot seems relatively well-behaved, with only one potentially serious outlier (684), and even in that case the Cook's distance is relatively low (< 0.02). 
+
+```{r}
+# Influence plot
+level1 <- lm(normexam ~ standLRT + schavg + standLRT*schavg, data = Exam)
+influenceIndexPlot(level1, id.n = 5)
+```
+
+#### 8. Level 2 diagnostics
+
+Next, we can look at the level 2 diagnostics to check for mispecfications at the group level. The first step is to consider the empirical Bayes residuals, plotted for the model intercepts and slopes in the two histograms below. 
+
+```{r}
+partial.pool <- lmer(normexam ~ standLRT + schavg + (1 + standLRT|school) 
+                     + standLRT*schavg, data = Exam)
+
+# Hierarchical Bayes: intercepts
+EB.resids <- HLMresid(partial.pool, level = "school", type = "EB")
+
+hist(EB.resids[, 1],
+     breaks = "FD",
+     xlab = "Empirical Bayes Intercepts",
+     ylim = c(0, 20),
+     main = "")
+
+# Hierarchical Bayes: slopes
+
+hist(EB.resids[, 2],
+     breaks = "FD",
+     xlab = "Emperical Bayes Slopes",
+     ylim = c(0, 20),
+     main = "")
+
+```
+
+The empirical Bayes residuals seem to look alright for the intercepts and are mean centered, but with a slighly heavier left tail than might be expected.
+
+The residuals for the slopes largely look ok with the exception of what seems to be a major outlier to the right end of the distribution. This is large outlier that warrants further consideration of the distribution of the empirical Bayes residuals, as shown in the following plots. 
+
+```{r}
+partial.pool <- lmer(normexam ~ standLRT + schavg + (1 + standLRT|school) 
+                     + standLRT*schavg, data = Exam)
+
+schavg <- unique(Exam$schavg[order(Exam$school)])
+
+# Plot the school average values against the intercept residuals
+plot(schavg, EB.resids[, 1],
+     pch  = 19,
+     col  = rgb(0, 0, 0, .5),
+     ylim = c(-.1, .1),
+     xlab = "School LRT Average",
+     ylab = "Empirical Bayes Intercept Residuals")
+
+abline(h = 0, col = "red", lty = 2)
+lines(lowess(schavg, EB.resids[, 1]),
+      col = "green", lwd = 2)
+
+# Plot the log uranium values against the slope residuals
+plot(schavg, EB.resids[, 2],
+     pch  = 19,
+     col  = rgb(0, 0, 0, .5),
+     xlab = "School LRT Average",
+     ylab = "Empirical Bayes Slope Residuals")
+
+abline(h = 0, col = "red", lty = 2)
+lines(lowess(schavg, EB.resids[, 2]),
+      col = "green", lwd = 2)
+
+qqPlot(EB.resids[, 1], id.n = 3,
+       ylab = "Empirical Bayes Intercept Residuals",
+       xlab = "Normal Quantiles")
+
+qqPlot(EB.resids[, 2], id.n = 3,
+       ylab = "Empirical Bayes Slope Residuals",
+       xlab = "Normal Quantiles")
+
+
+```
+
+The empirical Bayes distribution looks ok for slopes but pretty bad for the intercepts. This suggests there might be some heteroskedasticity at the level 2 that we need to account for. School 53 also looks like an outlier that might have a high level of influence; we can check this by looking at the influence plot for the level 2 model.
+
+```{r}
+# check influence at level 2
+cooks.d <- cooks.distance(partial.pool, group = "school")
+dotplot_diag(x = cooks.d,
+             cutoff = "internal",
+             name = "cooks.distance",
+             ylab = "Cook’s Distance",
+             xlab = "School")
+```
+
+This confirms that school 53 could be problematic and influential, in addition to schools 59 and 54. 
+
+#### 9. Standard errors
+
+We can now return to our no pooling model to explore how it compares to our partial pooling model. The table below compares the standard errors of the classical, heteroskedastic, and cluster robust standard errors of the no pooling model for all 65 schools. In addition, the final two columns display the ratio of the classic standard errors to the heteroskedastic and cluster robust ones, respectively.
+
+
+```{r}
+## look at changes to no pooling standard errors
+no.pool <- lm(normexam ~ factor(school) - 1 + standLRT, data = Exam)
+
+## Homoskedastic standard errors
+homs <- coef(summary(no.pool))[, 2]
+
+## Clustered standard errors
+
+# Specify the clustering variable
+cluster <- Exam$school
+
+# Sum the (y-b.hat*x)*x over each cluster for each column
+z  <- apply(estfun(no.pool), 2,
+            function(x) tapply(x, cluster, sum))
+meat <- t(z) %*% z
+
+# Get the "bread" which is n*(x’x)^-1 so we need to divide by n
+bread <- bread(no.pool)/nrow(Exam)
+
+# Use the sandwich formula to get the cluster-robust variance
+sandwich.variance <- (bread %*% meat %*% bread)
+
+# Robust variance matrix
+clust <- coeftest(no.pool, vcov = sandwich.variance)[,2]
+
+
+## Heteroskedasticity-robust standard errors
+coefs <- coeftest(no.pool,
+         vcov = vcovHC(no.pool, type = "HC0"),
+         df = df.residual(no.pool))
+hets <- coefs[, 2]
+
+ratios1 <- hets/homs
+ratios2 <- clust/homs
+
+errors <- cbind(homs, hets, clust, ratios1, ratios2)
+colnames(errors) <- c("Homoskedastic standard errors",
+                      "Heteroskedastic-robust standard errors",
+                      "Cluster-robust standard errors",
+                      "Ratio: heteroskedastic-robust to homomskedastic",
+                      "Ratio: cluster-robust to homomskedastic")
+
+kable(errors)
+
+```
+
+Looking at the ratios, we can see that the heteroskedastic standard errors are very similar to the classical ones, while the cluster robust errors are very different. This suggests that while we don't have heteroskedasticity at level 1, we need to be concerned about within cluster correlations. Accordingly, we may want to use a partial pooling model in order to account for these effects. 
+
+#### 10. Cross-validation
+
+To test our model specificity at level 1 and 2, we can use the leave-one-out cros-validation method. The tables below shows the root mean squared errors (rMSE) for both a simple model that does not vary slopes with one that does.
+
+```{r}
+# Level 1 cross-validation
+
+simple <- c()
+complex <- c()
+
+for(i in 1:nrow(Exam)){
+  # Train complex model (drop ith observation)
+  lmer.complex <- lmer(normexam ~ standLRT + schavg + schavg*standLRT
+                      + (1 + standLRT|school), data = Exam[-i, ])
+  
+  # Find the school from the dropped observation
+  school <- which(rownames(coef(lmer.complex)$school) == Exam$school[i])
+  
+  # prediction for complex model
+  
+  # Random intercept
+  rand.int <- coef(lmer.complex)$school[school, 1]
+  # Plus the school average LRT prediction of the intercept
+  schavg.int <- coef(lmer.complex)$school[1, 3]*Exam$schavg[i]
+  
+  # Random slope
+  rand.slope <- coef(lmer.complex)$school[school, 2]*Exam$standLRT[i]
+  
+  # Plus the school-level LRT prediction of the slope
+  schavg.slope <- prod(coef(lmer.complex)$school[1, 4],
+                       Exam$standLRT[i],
+                       Exam$schavg[i])
+  
+  # The prediction is the sum of these four components
+  pred.comp <- rand.int + schavg.int + rand.slope #+ schavg.slope
+  # Calculate the squared residual
+  comp.sq.resid <- (Exam$normexam[i] - pred.comp)^2
+  # Add the squared residual to the cv vector
+  complex <- append(complex, comp.sq.resid)
+  
+  # Train simple model dropping the ith observation
+  lmer.simple <- lmer(normexam ~ standLRT + schavg + (1|school),
+                     data = Exam[-i, ])
+  
+  # prediction for the simple model
+  
+  # Random intercept
+  rand.int <- coef(lmer.simple)$school[school, 1]
+  # Plus the school average LRT prediction of the intercept
+  schavg.int <- coef(lmer.simple)$school[1, 3]*Exam$schavg[i]
+  
+  # Random slope
+  slope <- coef(lmer.simple)$school[school, 2]*Exam$standLRT[i]
+ 
+  # The prediction is the sum of these three components
+  pred.simp <- rand.int + schavg.int + slope 
+  # Calculate the squared residual
+  simp.sq.resid <- (Exam$normexam[i] - pred.simp)^2
+  # Add the squared residual to the cv vector
+  simple <- append(complex, simp.sq.resid)
+  
+}
+
+comp.rMSE <- sqrt(sum(complex)/length(complex))
+simp.rMSE <- sqrt(sum(simple)/length(simple))
+
+```
+
+```{r}
+# Level 2 cross-validation
+
+school.standLRT <- tapply(Exam$standLRT, Exam$school, mean)
+# school.schavg <- tapply(Exam$schavg, Exam$school, mean)
+school.normexam <- tapply(Exam$normexam, Exam$school, mean)
+  
+school.data <- data.frame(schavg = school.standLRT,
+                          normexam = school.normexam)
+
+simple2 <- c()
+complex2 <- c()
+
+for(i in 1:length(unique(Exam$school))){
+  # train model dropping the ith school
+  school.drop <- Exam$school[i]
+  
+  # Include all schools except the dropped school
+  train.data <- Exam[!Exam$school == school.drop, ]
+  
+  # Fit the complex model on the training data 
+  lmer.complex <- lmer(normexam ~ standLRT + schavg + schavg*standLRT +
+                       (1 + standLRT|school), 
+                       data = train.data)
+  
+  # Get the overall intercept
+  int <- fixef(lmer.complex)[1]
+  
+  # Multiply floor fixed effect times the
+  slope <- fixef(lmer.complex)[2]*school.data$schavg[i]
+  
+  # Multiply by the school-level standLRT average
+  schavg <- fixef(lmer.complex)[3]*school.data$schavg[i]
+ 
+  # Get the interaction
+  standLRT.schavg <- prod(fixef(lmer.complex)[4],
+                     school.data$schavg[i],
+                     school.data$schavg[i])
+  
+  pred.comp <- int + slope + schavg + standLRT.schavg
+  # Calculate the squared residual
+  
+  comp.sq.resid <- (school.data$normexam[i] - pred.comp)^2
+  # Add the squared residual to the cv vector
+  complex2 <- append(complex, comp.sq.resid)
+  
+  
+  # Fit the simple model on the training data 
+  lmer.simple <- lmer(normexam ~ standLRT + schavg + 
+                       (1|school), 
+                       data = train.data)
+  
+  # Get the overall intercept
+  int <- fixef(lmer.simple)[1]
+  
+  # Multiply floor fixed effect times the
+  slope <- fixef(lmer.simple)[2]*school.data$schavg[i]
+  
+  # Multiply by the school-level standLRT average
+  schavg <- fixef(lmer.simple)[3]*school.data$schavg[i]
+   
+  pred.simp <- int + slope + schavg
+  # Calculate the squared residual
+  
+  simp.sq.resid <- (school.data$normexam[i] - pred.simp)^2
+  # Add the squared residual to the cv vector
+  simple2 <- append(complex, simp.sq.resid)
+  
+}
+complex.rMSE <- sqrt(sum(complex2)/length(complex2))
+simple.rMSE <- sqrt(sum(simple2)/length(simple2))
+
+
+level1.rMSE <- c(comp.rMSE, simp.rMSE)
+level2.rMSE <- c(complex.rMSE, simple.rMSE)
+rMSE <- rbind(level1.rMSE, level2.rMSE)
+
+colnames(rMSE) <- c("complex rMSE", "simple rMSE")
+rownames(rMSE) <- c("Level 1 cross-validation", "Level 2 cross-validation")
+kable(rMSE)
+```
+
+The cross-validation tests shows that the more complex level 2 model has the lowest rMSE value, outperforming the simple model and the complex level 1 model. Interestingly, the level 1 complex model has a slightly higher rMSE value than the simple model, suggesting that the complex model is only appropriate if analyzed in a multilevel context. However, overall all of the rMSE values are very close to each other, suggesting the models are all fairly close to each other in performance. 
+
+
+#### 11. Why so hungry?
+
+Why are econometricians, statisticians, and machine learning researchers so hungry? Probably because their diet consists primarly of meals of tofu and bread from the sandwich package. That would leave me longing for an infinitely large Chinese buffet or lots of fried chicken too. 
+
+#### Citation
+
+Goldstein, 1993. A Multilevel analysis of school examination results. Oxford Review of Education, Vol. 19 No. 4.
+
+
+```{r,eval=FALSE}
+# compare partial and no pooling standard errors
+partial.pool <- lmer(normexam ~ standLRT + schavg 
+                      + (1 + standLRT|school), data = Exam)
+
+no.pool <- lm(normexam ~ factor(school) - 1 + standLRT, data = Exam)
+
+cbind(summary(partial.pool)$coef[,2], 
+      
+      summary(no.pool)$coef[,2]
+
+# pull out coefficients, means
+
+ranef(partial.pool)
+fixef(partial.pool)
+coef(partial.pool)
+
+summary(no.pool)
+```
