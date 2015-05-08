@@ -1,0 +1,702 @@
+---
+title: "704 Final"
+author: "Brian Sergi"
+date: "May 7, 2015"
+output: html_document
+---
+
+```{r global_options, include=FALSE}
+# global kitting options for report output
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE, cache=TRUE, fig.align='center')
+```
+
+```{r}
+# load packages
+library(plm)
+library(arm)
+library(AER)
+library(mgcv)
+library(car)
+library(knitr)
+library(xtable)
+```
+
+```{r}
+# load data
+library(Ecdat)
+data("Cigar", package = "Ecdat")
+
+# convert to panel data frame
+Cigar.p <- pdata.frame(Cigar, index = c("state", "year"))
+```
+
+### Overview
+
+This report examines the results and data from a 2000 paper "To Pool or Not to Pool: Homogeneous versus Heterogeneous Estimators Applied to Cigarette Demand" by Badi H. Baltagi, James M. Griffin and Weiwen Xiong. In the paper, the authors use different models on a panel data set of cigarette consumption across 46 states from 1963 to 1992. The dataset includes information on the state cigarette sales (sales, in packs per capita), the price (price, $ per pack of cigarettes), the per capita disposal income (ndi), and the minimum price of cigarettes in adjoining states (pimin, $ per pack of cigarettes. Each observation includes this data for a corresponding state and year.
+
+In addition to the above data, the dataset also includes information on the consumer price index over the time period, with 1983 chosen as a base year. This is important because Baltagi et. al. state that their models are based on real data. However it looks like the data is currently in nominal values, as prices increase over time. Accordingly, I adjusted the price, pimin, and ndi values to real dollars, using 1983 as the base value. 
+
+
+```{r}
+# plot to check relationship between year and price - looks like values are nominal
+# plot(Cigar$year, Cigar$price)
+
+# convert nominal to real dollars
+
+# choose base year
+CPI.1983 <- unique(Cigar.p$cpi[which(Cigar.p$year == 83)])
+
+# update prices and disposable income to real dollars (1983)
+Cigar.p$price.real <- Cigar.p$price * CPI.1983 / Cigar.p$cpi 
+Cigar.p$pimin.real <- Cigar.p$pimin * CPI.1983 / Cigar.p$cpi 
+Cigar.p$ndi.real <- Cigar.p$ndi * CPI.1983 / Cigar.p$cpi 
+
+# updated price vs. year plot, looks better
+# plot(Cigar.p$year, Cigar.p$price.real)
+
+````
+
+### Replication report
+
+#### 1. OLS results
+
+Baltagi et. al. run three different regression model looking at the relationship between sales and last year's sales (lagged variable), price, disposable income, and neighboring state minimum price. The three models they compare are a simple OLS model, a model that includes time dummies for the year of the observation, and a "within" estimator model that accounts for state and year. All of the authors' models take the log of all of the variables (independent and dependent). 
+
+The following three tables present my attempt at replicating the authors' regression results for each of the three models(looking only at the short run values). 
+
+
+```{r}
+# compare first regression: OLS
+
+# create lagged sales variable
+Cigar.p$lag.sales <- lag(Cigar.p$sales, k = 1)
+
+# head(Cigar.p[ , c("lag.sales", "sales")])  check to make sure lagging worked--it did!
+
+# regression
+cigar.cp <- lm(log(sales) ~ log(lag.sales) + log(price.real) + log(pimin.real) + log(ndi.real), 
+               data = Cigar.p)
+
+row1 <- cbind(c(0.97, -0.090, 0.024, -0.03), summary(cigar.cp)$coef[2:5,1],
+              c(157.7, 6.2, 1.8, 5.1), summary(cigar.cp)$coef[2:5,3])
+
+colnames(row1) <- c("Author estimates", "Replicated estimates",
+                    "Author t-values", "Replicated t-values")
+
+kable(row1, caption = "Regular OLS regression model", digits = 3)
+```
+
+```{r}
+# time dummies regression
+cigar.cp.dummies <- lm(log(sales) ~ log(lag.sales) + log(price.real) + log(pimin.real) + log(ndi.real) +
+                       factor(year), data = Cigar.p)
+
+row2 <- cbind(c(0.95, -0.137, 0.037, -0.01), summary(cigar.cp.dummies)$coef[2:5,1],
+              c(148.5, 8.7, 2.7, 1.1), summary(cigar.cp.dummies)$coef[2:5,3])
+
+colnames(row2) <- c("Author estimates", "Replicated estimates",
+                    "Author t-values", "Replicated t-values")
+
+kable(row2, caption = "Time dummies model", digits = 3)
+
+```
+
+```{r}
+# within transformation regressions
+cigar.cp.within <- plm(log(sales) ~ log(lag.sales) + log(price.real) + log(pimin.real) + log(ndi.real)
+                       + factor(year) + factor(state), data = Cigar.p, model = "within")
+
+row4 <- cbind(c(0.83, -0.299, 0.034, 0.10), summary(cigar.cp.within)$coef[1:4,1],
+              c(66.3, 12.7, 1.2, 4.2), summary(cigar.cp.within)$coef[1:4,3])
+
+colnames(row4) <- c("Author estimates", "Replicated estimates",
+                    "Author t-values", "Replicated t-values")
+
+kable(row4, caption = "Within estimation model", digits = 3)
+```
+
+As the tables show, I was largely able to replicate the authors' results (at least to within reasonable ranges). However, even after adjusting for real values, there are still some discrepencies with the authors' values.The replication seems to have fit best for the OLS and within estimation models, while the time dummies model is off by a larger margin. For most of the estimates, I was able to replicate the results to within around 0.01, and the furthest deviation was by 0.015. 
+
+In addition, a number of the t-values are off, and several are of similar maginitude but different sign. One possible explanation for this is that the authors may be reporting the absolute value of the t-statistic.
+
+#### 2. Reproducibility
+
+Although the authors did take some good steps to make their work reproducible, I still found it somewhat difficult to replicate their results. Following their prescribed models and even after converting to real dollars, I was nevertheless somewhat off from their estimates. Although this differences are small, they reflect the general challenge of trying to reproduce other people's work and the importance of very clearly identfying what you did.
+
+This case is likely illustrative for the general challenge of reproducibility. In this scenario, the authors do explain the data they are working with and make it available as a R dataset, which is a good step. However, as with many research efforts, we don't have the actual code that they ran (at least as far as I'm aware), so we can cross-check our replication attempt against what they did.
+
+Ultimately, having reproducible research is critical. It allows  others to check your work and also to build on what you've done. It is an also important element to "Feynman's Rule," which notes that one should bend over backwards to show where you might be wrong. By being open about your work and allowing others the chance to reproduce it, you are demonstrating scientific integrity. 
+
+Good reproducible research should include not only a careful and thorough description of what one has done (as the authors do here in their paper), but also the dataset used for analysis and the code used for the analysis so that others can repeat exactly what you've done. 
+
+#### 3. Interpretation
+
+The OLS regression model that the authors run includes the log of the dependent variable as well as the log of all of the independent variables. Accordingly, we can interpret the coefficients estimates on a "log-log" basis, meaning that a percentage change in the independent variable is associated with a percentage change in the independent.
+
+As an example, in the OLS model the coefficient estimate for price is -0.090. This means that a 1% increase in the price of cigarettes in a state is associated with a 0.09% decrease in the consumption of cigarettes in that state.
+
+As we might expect, sales are positively correlated with the minimum price in other states and with the lagged sales, and negatively correlated with price. Interestingly, the sign of the disposable income variable is different for the within model, suggesting that within any given state disposable income is correlated with higher cigarette sales, but looking across the data higher incomes generally mean that people smoke less. This may be a result of differences in the smoking rates and disposable income across states, making this coefficient harder to interpret.
+
+### The 5 data stories
+
+#### 1. What are the 5 data stories?
+
+The five data stories are:
+
+1. Data summary - This story involves describing the data as it is, without making any assumptions. Typically the data summary story is told using histograms and tables.
+
+2. Conditional distribution - This story describes the distribution of a variable of interest in the data as it relates to other variables in the data, based on an expected model. The conditional distribution story often involves qqplots or an examination of the residuals of different models.
+
+3. Forecasting - This story reflects the ability of model explored in the conditional distribution story to make predictions about new data. 
+
+4. Statistical inference - This story involves generalization from the data of a sample to a large population. 
+
+5. Causal inference - This story postulates a relationship between changes in the independent and dependent variables. 
+
+In my view, the data summary is a particularly crucial story that is often overlooked. Many times, policy makers or researchers are eager to jump right to statistical or causal inference and fail to look closely at the data. The data summary story is particularly helpful in getting a "feel" for the data and understanding its limitations. For example, simple histograms can often reveal whether certain models are not going to be very useful for the dataset of interest. The data summary story, when coupled with the conditional distribution and forecasting stories, form a critical foundation for understanding the data on hand without make assumptions that are difficult to support. 
+
+Ultimately, decision makers expect to hear information on the last two stories. This is in tension with the fact that in general the "reliability" of the stories decreases from data summary to causal inference as more assumptions are made. To some extent, the last two stories seem to make intuitive sense; as humans, we are tuned to look for patterns, relationships, generalizations, and causal explanations. It is the challenge of social and data scientists to carefully explore the first three stories as best they can, and to be honest about type of inferences (usually limited) that can be made regarding the latter two. 
+
+#### 2. Dependent log transform
+
+To determine whether the sales variable should be log transformed, I first looked at the histogram of the sales variable, shown below.
+
+
+```{r}
+# histogram of sales
+hist(Cigar.p$sales, breaks='FD', main = "Histogram of cigarette sales",
+     xlab = "Sales (packs per capita)")
+```
+
+The histogram shows that the sales data is distributed somewhat normally, but with an extremely long right tail. This large right tail suggests that logging the sales variable may be appropriate.
+
+We can further investigate the usefulness of a log transformation on the sales variable by using the BoxCox test, the output of which is shown below.
+
+```{r}
+# check boxCox recommendation for within model
+boxCox(sales ~ log(lag.sales) + price.real + 
+               pimin.real + ndi.real, data = Cigar.p, 
+               family = 'yjPower')
+```
+
+The result of the maximum log-likelihood estimation ($\lambda$ = 0) indicates that the log transformation of sales is indeed appropriate here. As a final check, we can look at the histogram of the logged sales data; from the histogram below we can see that the data looks much more normally distributed. 
+
+```{r}
+# check histogram for log
+hist(log(Cigar$sales), breaks='FD', main = "Histogram of logged sales",
+     xlab = "Logged sales")
+```
+
+The log transformation is very commonly used as a transformation because it is relatively straightforward, easy to apply, and fairly simple to interpret. In addition, it is commonly used in cases with income or price data since there is often data that cannot be less than zero and that is distributed lognormally (i.e. normally with a heavy right tail). In this case, it seems as though the log transform is appropriate for the dependent variable.
+
+#### 3. Independent log transform
+
+To determine whether we should transform any of the independent variables, we can first start by looking at the histograms of the three variables of interest (price, minimum price in other states, and disposable income), as well as the lagged sales value. 
+
+The histograms below show the distribution of the three independent variables. Overall the histogram look pretty good; the two price variables have slightly heavy tails but it's not apparent that any transformation is essential here.
+
+
+```{r}
+# histograms
+
+# disposable income
+hist(Cigar.p$ndi.real, main = "Histogram of disposable income", 
+     xlab = "Disposable income")
+
+# price
+hist(Cigar.p$price.real, main = "Histogram of price ", 
+     xlab = "Price")
+
+# neighboring price
+hist(Cigar.p$pimin.real, main = "Histogram of neighboring state price", 
+     xlab = "Neighboring state price")
+```
+
+Having looked at the histograms, we can use the BoxTidwell test to see if it suggests a transformation.
+
+
+```{r}
+# boxTidwell tests
+boxTidwell(log(sales) ~ ndi.real, 
+           other.x = ~ log(lag.sales) + pimin.real + price.real,
+           data = Cigar.p)
+
+boxTidwell(log(sales) ~ price.real, 
+           other.x = ~ log(lag.sales) + pimin.real + ndi.real,
+           data = Cigar.p)
+
+boxTidwell(log(sales) ~ pimin.real , 
+           other.x = ~ log(lag.sales) + ndi.real + price.real,
+           data = Cigar.p)
+
+```
+
+The output of the BoxTidwell tests suggest some pretty outrageous numbers, and we can see that the p-values on the maximum likelihood estimates for lambda are really high. Accordingly, it seems hard to conclude that there is any definitive transformation for the dependent variables. In contrast, if the lambda values had been around zero, we might have been able to justify the log transformation used by the authors. 
+
+Our next check is to run a generalized additive model (gam) with smoothing on our independent variables. For the gam, I included our three independent variables of interest as well as the lagged sales. The results are shown in the following plots:
+
+
+```{r}
+# look at gam for independent variables
+gam1 <- gam(log(sales) ~ s(lag.sales) + s(price.real) + s(pimin.real) + s(ndi.real) 
+            + factor(year) + factor(state),
+            data = Cigar.p)
+
+plot(fitted(gam1), resid(gam1),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     pch = 19,
+     col = rgb(0, 0, 0, .5),
+     ylim = c(-1, 1),
+     main = "Fitted vs. residuals")
+lines(lowess(fitted(gam1), resid(gam1)), col = "green", lwd = 2)
+
+plot(gam1,
+     residuals = TRUE,
+     shade = TRUE,
+     select = 1,
+     main = "Smoothing on lagged sales")
+
+plot(gam1,
+     residuals = TRUE,
+     shade = TRUE,
+     select = 2,
+     main = "Smoothing on price")
+
+plot(gam1,
+     residuals = TRUE,
+     shade = TRUE,
+     select = 3,
+     main = "Smoothing on neighboring price")
+
+plot(gam1,
+     residuals = TRUE,
+     shade = TRUE,
+     select = 4,
+     main = "Smoothing on disposable income")
+
+# qqnorm(resid(gam1),
+#       pch = 19,
+#       ylab = "Raw Residuals",
+#       ylim = c(-1, 1))
+# qqline(resid(gam1))
+
+```
+
+The first plot (fitted vs. residual values) shows no big trend in the residuals, and it doesn't look like there is much heteroskedasticity to worry about aboue. 
+
+In the second plot, we can see that we have some non-linearity in the lagged sales, suggesting that we need to apply the same log transformation as we did to the dependent sales variable. The remaining three plots show smoothing for price, neighboring price, and disposable income. The disposable income plot shows some non-linearities that we might be worried about, but otherwise the variables don't seem to require a transformation. 
+
+We could try smoothing on the logged variables to see if that improves the situation. This is illustrated in the gam plots below:
+
+
+```{r}
+# look at gam for log transformation
+gam2 <- gam(log(sales) ~ s(log(lag.sales)) + s(log(price.real)) + 
+            s(log(pimin.real)) + s(log(ndi.real)) + factor(year) + factor(state),
+            data = Cigar.p)
+
+plot(fitted(gam2), resid(gam2),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     pch = 19,
+     col = rgb(0, 0, 0, .5),
+     ylim = c(-1, 1),
+     main = "Fitted vs. residuals")
+lines(lowess(fitted(gam2), resid(gam2)), col = "green", lwd = 2)
+
+
+plot(gam2,
+     residuals = TRUE,
+     shade = TRUE,
+     select = 1,
+     main = "Smoothing on log of lagged sales")
+
+plot(gam2,
+     residuals = TRUE,
+     shade = TRUE,
+     select = 2,
+     main = "Smoothing on log of price")
+
+plot(gam2,
+     residuals = TRUE,
+     shade = TRUE,
+     select = 3,
+     main = "Smoothing on log of neighboring price")
+
+plot(gam2,
+     residuals = TRUE,
+     shade = TRUE,
+     select = 4,
+     main = "Smoothing on log of disposable income")
+
+```
+
+The results indicate that with the exception of lagged sales (which looks appropriate after the log transformation, as we would expect), logging the variables doesn't seem to improve the case of the disposable income variable, and has little to no effect on the other variables. 
+
+In conclusion, we can deduce that logging most of the independent variables (except for lagged sales) doesn't seem to have an effect or improve things. Accordingly, it is not clear that logging the variables is truly necessary. Returning to the idea of reproducibility, one thing that I would have liked to see in the authors' paper is a stronger justification for why these independent variables should be logged. Given the lack of a strong reason for a log transform, I used the unlogged values for the remainder of this report.
+
+```{r, eval=FALSE}
+# look at histograms for logged transformations 
+# results: not much improvement over unlogged variables (same conclusion as from gam)
+
+hist(log(Cigar.p$ndi.real))
+hist(log(Cigar.p$price.real))
+hist(log(Cigar.p$pimin.real))
+```
+
+#### 4. Residuals
+
+The next step in the report is to look at the residuals of the three models used by the authors. Since the within model does not work with some of the traditional residual plotting functions, I used the equivalent least-squares dummy variable (LSDV) regression in its place. The three qqplots below look at the studentized residuals across the quantiles for the three models. 
+
+```{r}
+# look at residuals (qqplots)
+
+# 3 models
+cigar.cp <- lm(log(sales) ~ log(lag.sales) + price.real + pimin.real + ndi.real, 
+               data = Cigar.p)
+
+cigar.cp.dummies <- lm(log(sales) ~ log(lag.sales) + price.real + pimin.real + ndi.real +
+                       factor(year), data = Cigar.p)
+
+# use no pool lsdv in lieu within model since within doesn't work with qqPlot
+cigar.lsdv <- lm(log(sales) ~ log(lag.sales) + price.real + pimin.real + ndi.real
+                  + factor(state) - 1 + factor(year) - 1 , data = Cigar.p)
+
+#cigar.cp.within <- plm(log(sales) ~ log(lag.sales) + log(price.real) + log(pimin.real) + log(ndi.real), 
+#                    data = Cigar.p, model = "within")
+
+# look at qqplots
+qqPlot(cigar.cp, main = "OLS model")
+qqPlot(cigar.cp.dummies, main = "Time dummies model")
+# qqPlot(cigar.cp.within) 
+qqPlot(cigar.lsdv, main = "LSDV model")
+
+```
+
+The qqplots show that we have some issues with outliers at the tail ends of the distributions for all three models. There are particularly large deviations at the lower end of the distribution for the OLS and time dummies models. The within/LSDV model seems to improve on this a little bit, but at the expense of creating some more pronounced outliers at the upper end. Accordingly, we will want to look at the size of the residuals and the influence of these new outliers to compare the models.
+
+Next, we can consider the jacknife residuals of the three models. The results are shown in the three plots below. Overall it looks there isn't much heteroskedasticity to be worried about.
+
+Interestingly, we can see that OLS model seems to perform best in terms of minimizing the relationship between the residuals and the fitted values, with only a slight deviation at the upper end of the data. In contrast, both the time dummies and LSDV/within models show some deviations at the upper and lower ends. This may suggest that our more complicated models are still having problems fitting the data.
+
+```{r}
+# check jacknife residuals
+
+# OLS model
+plot(fitted(cigar.cp), rstudent(cigar.cp),
+     xlab = "Fitted Values",
+     ylab = "Jackknife Residuals",
+     pch = 19,
+     col = rgb(0, 0, 0, .5),
+     ylim = c(-4, 4),
+     main = "OLS model")
+
+lines(lowess(fitted(cigar.cp), rstudent(cigar.cp)), col = "green", lwd = 2)
+abline(h = 0, col = "red", lty = 2, lwd = 4)
+
+# time dummies model
+plot(fitted(cigar.cp.dummies), rstudent(cigar.cp.dummies),
+     xlab = "Fitted Values",
+     ylab = "Jackknife Residuals",
+     pch = 19,
+     col = rgb(0, 0, 0, .5),
+     ylim = c(-4, 4),
+     main = "Time dummies model")
+lines(lowess(fitted(cigar.cp.dummies), rstudent(cigar.cp.dummies)), col = "green", lwd = 2)
+abline(h = 0, col = "red", lty = 2, lwd = 4)
+
+# within/lsdv model
+plot(fitted(cigar.lsdv), rstudent(cigar.lsdv),
+     xlab = "Fitted Values",
+     ylab = "Jackknife Residuals",
+     pch = 19,
+     col = rgb(0, 0, 0, .5),
+     ylim = c(-4, 4),
+     main = "LSDV model")
+lines(lowess(fitted(cigar.lsdv), rstudent(cigar.lsdv)), col = "green", lwd = 2)
+abline(h = 0, col = "red", lty = 2, lwd = 4)
+
+```
+
+Finally, we can look at the cook's distances for each of the three models by using influence plots:
+
+```{r}
+# influence plots
+influenceIndexPlot(cigar.cp, id.n = 3)
+
+influenceIndexPlot(cigar.cp.dummies, id.n = 3)
+
+influenceIndexPlot(cigar.lsdv, id.n = 3)
+```
+
+These plots highlight some of the tradeoffs in the residuals between the three models. For example, we can see that the LSDV models reduces the overall studentized residuals relative to the OLS model but has larger individual outliers (as reflected in the qqplot above). Since the cook's distances for these outliers are relatively small, these outliers shouldn't have too large of an effect on the model, which is good. 
+
+Overall, we can see that in any of the models we do have some problems with the residuals of certain outliers. While we don't see too much heteroskedasticity (suggesting the model is ok), some observations are being very well-explained by the data. However, it doesn't seem like those observations have very high influence, so we can probably be confidant that they aren't dictating the model.
+
+One way to address these issues would be consider the analysis with and without some of the outliers to see how much of an impact they have. We could also consider more advanced, non-linear regressions, although we would want to have a motivation for this type of model. More interesting as a research question would be to isolate some of these outliers and try to understand why they are outliers. In any case, one should not simple disregard the outliers or throw them out without carefully considering them.
+
+
+#### 5. Partial pooling
+
+For comparison, can we also conduct a partial polling version of the within model specified by the authors. The table below shows the output for this regression, and compares it to the within estimation model in the table immediately following.
+
+
+```{r}
+# partial pooling model
+cigar.pp <- lmer(log(sales) ~ log(lag.sales) + price.real + pimin.real + ndi.real 
+                 + (1|year) + (1|state), data = Cigar.p)
+
+kable(summary(cigar.pp)$coef, caption = "Partial pooling regression")
+
+# within model
+cigar.cp.within <- plm(log(sales) ~ log(lag.sales) + price.real + pimin.real + ndi.real 
+                        + factor(year), data = Cigar.p, model = "within")
+
+kable(summary(cigar.cp.within)$coef[1:4,], caption = "Within estimation model")
+
+```
+
+From the tables, we can see that the estimated coefficients from the two models are pretty close but slightly different. This difference suggests that the within model is picking up some state-by-state or year-by-year trends that the partial pooling model cannot see.
+
+We can then compare the variance components of this partial pooling model with a no pooling model. The two tables below summarize these elements; the first provides the variance for the state and year estimates, which the second provides the standard deviations for the independent variables in the model (lagged sales, price, neighboring price, and disposable income). 
+
+```{r}
+# compare variance of partial and no pooling
+
+# partial pooling model
+cigar.pp <- lmer(log(sales) ~ log(lag.sales) + price.real + pimin.real + ndi.real 
+                 + (1|year) + (1|state), data = Cigar.p)
+
+# pull out state and year intercepts from partial pooling, calculate variance
+pp.states.var <- var(fixef(cigar.pp)[1] + ranef(cigar.pp)$state)
+pp.years.var <- var(fixef(cigar.pp)[1] + ranef(cigar.pp)$year)
+
+# combine into table
+errors1 <- c(pp.states.var, pp.years.var)
+
+
+
+# no pooling lsdv version
+cigar.lsdv <- lm(log(sales) ~ log(lag.sales) + price.real + pimin.real + ndi.real 
+                  + factor(state) - 1 + factor(year) - 1 , data = Cigar.p)
+
+# pull out state and year intercepts for no pooling, calculate variance
+lsdv.states.var <-  var(summary(cigar.lsdv)$coef[5:50])
+lsdv.years.var <-  var(summary(cigar.lsdv)$coef[51:77])
+
+# combine into table
+errors2 <- c(lsdv.states.var, lsdv.years.var)
+
+vars <- rbind(errors1, errors2)
+rownames(vars) <- c("Partial pooling", 
+                    "No pooling model")
+colnames(vars) <- c("State", "Year")
+kable(vars, caption = "Variance of partial and no pooling")
+
+# pull out standard deviations of 4 regressors
+regressors <- rbind(summary(cigar.pp)$coef[2:5,2], summary(cigar.lsdv)$coef[1:4,2])
+
+rownames(regressors) <- c("Partial pooling", 
+                          "No pooling model")
+colnames(regressors) <- c("Log of lag sales", "Price", 
+                          "Neighboring state price)", 
+                          "Disposable income")
+
+kable(regressors, caption = "Standard deviations of estimates")
+
+# page 612 - within estimation removes time invariant factors (same as no pooling by state)
+# within and no pooling same for just state
+```
+
+In both cases, we can see that the partial pooling model has coefficients with lower variance than the no pooling model. This makes intuitive sense; the no pooling model treats each state separately, whereas the partial pooling brings all of the estimates closer to the overall mean, thereby reducing variance.
+
+We might expect that partial pooling would be better for this application. This type of model would do better in terms of giving us a sense of a "national trend", whereas a no pooling model isolates the data from each state. However, the partial pooling model treats variation across states and years as random noise, which might be problematic if we think there are significant differences across state or time. If this is the case, then the within estimation would be more appropriate. 
+
+
+#### 6. Strict exogeneity
+
+For the within model to give consistent estimates, we need the strict exogeneity assumption to hold; that is, the expected values of the errors in any time period should be independent of the regressors in all time periods. 
+
+To check this for our three models, we can first consider contemporanous exogeneity to try to assess whether the regressors are correlated with the errors terms. This is the same as the typical residual analysis that we perform in our conditional distribution story (discussed previously for question 4). As an additional check here, I also looked at the component + residual plots for the three models, shown below. 
+
+```{r}
+# component plus residual plot for the lsdv of the within model
+crPlots(cigar.cp, main = "Component + Residual Plot: OLS")
+crPlots(cigar.cp.dummies, main = "Component + Residual Plot: Time dummies")
+crPlots(cigar.lsdv, main = "Component + Residual Plot: LSDV")
+```
+
+As we saw before, it looks like the residuals are pretty well behaved. There doesn't seem to be much heteroskedasticity across the three models. For lagged price, we expect to see a positive relationship between the variable and the residuals, and this is discussed more in the context of forward exogeneity below. As noted above, the within model seems to perform worse than OLS in terms of some of the residuals; we can see here that it creates a negative slope in the residuals when compared to price. This might reflect a concern with our contemporaneous exogeneity assumption. Otherwise, the residuals look ok, although as with all models there is never a guarantee that there is no omitted variable bias.
+
+In terms of forward exogeneity, we should be concerned with whether the regressors correlated with the dependent variable. As shown in the above CR plot, we can see a positive relationship between the residuals and lagged sales, suggesting an intertemporal relationship. We can slice this another way by looking at the gam model with smoothing on the lagged sales variable, shown in the plot below.
+
+
+```{r}
+# forward exogeneity
+
+# head(Cigar.p[ , c("sales", "lag.sales")]) check that lagging worked
+
+# Run regression with lagged regressor
+lag.sales.gam <- gam(log(sales) ~ s(log(lag.sales)) + price.real + pimin.real + ndi.real +
+                     factor(year) + factor(state), data = Cigar.p)
+
+plot(lag.sales.gam,
+     residuals = TRUE,
+     shade = TRUE,
+     select = 1,
+     main = "Smoothing on lagged sales")
+
+```
+
+The model confirms the relatiosnhip between sales in different time periods, validating our need for including a lagged varaible in the regression. 
+
+
+Finally, we can consider backwards exogeneity by lagging the independent variables and seeing if we can spot any relationships there. The following gam plots show smooting for these lagged regressors:
+
+```{r}
+# backward exogeneity
+
+# lag other variables
+Cigar.p$lag.price <- lag(Cigar.p$price.real, k = 1)
+Cigar.p$lag.pimin <- lag(Cigar.p$pimin.real, k = 1)
+Cigar.p$lag.ndi <- lag(Cigar.p$ndi.real, k = 1)
+
+gam <- gam(log(sales) ~  log(lag.sales) + s(lag.price) + 
+            s(lag.pimin) + s(lag.ndi) + price.real + 
+            pimin.real + ndi.real + factor(year) + factor(state),
+            data = Cigar.p)
+
+# plot(fitted(gam), resid(gam),
+#      xlab = "Fitted Values",
+#      ylab = "Residuals",
+#      pch = 19,
+#      col = rgb(0, 0, 0, .5),
+#      ylim = c(-1, 1))
+# lines(lowess(fitted(gam), resid(gam)), col = "green", lwd = 2)
+
+plot(gam,
+     residuals = TRUE,
+     shade = TRUE,
+     select = 1,
+     main = "Smoothing on lagged price")
+
+plot(gam,
+     residuals = TRUE,
+     shade = TRUE,
+     select = 2,
+     main = "Smoothing on lagged neighboring price")
+
+plot(gam,
+     residuals = TRUE,
+     shade = TRUE,
+     select = 3,
+     main = "Smoothing on lagged disposable income")
+
+```
+
+Here we can see some slight positive trends in the independent variables, although mostly they do not seem very extreme. We do see some slight curvature with the disposable income variable, which suggests that there may be a relationship between the previous regressors and the dependent variable here. In any case, even with perfect flat smoothing curves, we are not able to guarantee the strict exogeneity condition.
+
+Overall, strict exogeneity is a very high hurdle to pass. We have already seen that there is definitely some inter-temporal dependencies in the dependent variable, furthering complicating our efforts to assess the exogeneity of the regressors. This is one serious complication for the within estimation model. 
+
+
+#### 7. Differences in differences
+
+The policy interventions discussed by the authors are treated differently by each of the three models. For the OLS model, all of the observations are thrown into one pool without consideration of year; as such, they are not accounted for at all in this model. In contrast, the time dummies and within estimation model incorporate regressors for year, which allows for an incorporation of different time period effects. In these models, the effects of a policy are assumed to be fixed effects of the corresponding time periods.
+
+In this case, we cannot use differences-in-differences because we do not have a control group for comparison. As the authors suggest, the policies are largely applied and implemented nationwide, meaning that all the states in the dataset are exposed to them. According, we are not able to make group comparisons. 
+
+In order to use differences-in-differences, we would need data on a policy intervention that was implemented in some states but not others. This would allows us to compare the differences between the control and the experimental group. However, we would also have to have data on all of the other state differences to ensure that any heterogeneity is not time invariant.  We would also need to be confident in our ability to include all relevant time trends, as unmodeled time trends pose a problem to differences-in-differences. Ideally, we would have data where the control and experimental groups are geographically close and similar in other regards.
+
+If we did have these data, we would incorporate a dummy variable indicating whether a state received the treament (i.e. the policy intervention), and then include an interaction term between the treatment and time period regressors. The estimated coefficient of this component would then provide us with the difference-in-difference estimator.
+
+#### 8. Forecasting
+
+We can compare the predictive capabilities of our OLS and within models by looking at their ability to make 1-year ahead forecasts. In this example, I do this by removing the data from 1992, training the models on the remaining data, and then testing the root mean squared errors of the two models run on the test data. The table below shows the rMSE values for the two different models on the 1992 test data.
+
+```{r}
+# 1 year ahead forecast for ols and within models
+
+# Training data drops the last time period
+training <- Cigar.p[!Cigar.p$year == 92, ]
+
+# Test data includes only the last time period
+test <- Cigar.p[Cigar.p$year == 92, ]
+
+# OLS model
+model.ols <- lm(log(sales) ~ log(lag.sales) + price.real + pimin.real + ndi.real, 
+                data = training)
+
+# LSDV model
+model.lsdv <- lm(log(sales) ~ log(lag.sales) + price.real + pimin.real + ndi.real 
+                  + factor(state) - 1 + factor(year) - 1 , data = training)
+
+# set test data for 1992 as 1991 time dummy
+test$year <- 91
+
+# Predict test data
+model.ols.pred <- predict(model.ols, newdata = test)
+model.within.pred <- predict(model.lsdv, newdata = test)
+
+# Calculate the residuals
+model.ols.resid <- log(test$sales) - model.ols.pred
+model.within.resid <- log(test$sales) - model.within.pred
+
+# Get the rMSE values for both models
+rMSE.model.ols <- mean(model.ols.resid^2)
+rMSE.model.within <- mean(model.within.resid^2)
+
+rMSE <- cbind(rMSE.model.ols, rMSE.model.within)
+colnames(rMSE) <- c("OLS rMSE", "Within model rMSE")
+kable(rMSE, caption = "Root mean squared errors for OLS and within models")
+```
+
+The table shows that both models are pretty good, with very low rMSE values at the third decimal place. Interestingly, we can see that OLS model actuall slighly outperforms the within estimation model (although the difference is very small). However, the demonstrates that our more complex model (wich accounts for time and state differences) does not necessarily outperform the simpler OLS model. While there might be other factors to consider in our choice of model that might make use prefer the within estimation, this reflects that there is value to the OLS model as well.
+
+#### 9. Standard error comparison
+
+Finally, we can take a look at the standard errors of the within model, comparing the "classical" standard errors with the heteroskedastic and serial-correlation robust standard errors to get a sense of what is going on in the data. The table below shows the calculated standard errors for each coefficient, as well as the ratios between the different standard errors. 
+
+```{r}
+# standard errors
+
+# within model
+cigar.within <- plm(log(sales) ~ log(lag.sales) + log(price.real) + log(pimin.real) + log(ndi.real)
+                    + factor(year), data = Cigar.p, model = "within")
+
+# homoskedastic standard errors
+homs <- summary(cigar.within)$coef[,2]
+
+# heteroskedastic standard errors
+hets <- coeftest(cigar.within, vcov = vcovHC(cigar.within, type = "HC0"))[,2]
+
+# serial correlation standard errors
+serial <-  coeftest(cigar.within,
+         vcov = function(x) 
+         vcovHC(x, method  = "white1",
+                   cluster = "group"))[,2]
+
+# look at ratio of standard errors
+ratios1 <- hets/homs
+ratios2 <- serial/homs
+
+errors <- cbind(homs, hets, serial, ratios1, ratios2)
+colnames(errors) <- c("Homoskedastic standard errors",
+                      "Heteroskedastic-robust standard errors",
+                      "Serial correlation robust standard errors",
+                      "Ratio: heteroskedastic-robust to homomskedastic",
+                      "Ratio: serial correlation robust to homomskedastic")
+kable(errors)
+```
+
+
+The table shows that in general, the serial correlation standard errors are slighly larger than the classical ones, and the heteroskedastic ones are slighly larger than the serial ones. This suggests that there is some serial correlation and heteroskedasticity that the robust standard errors are picking up, indicating potential concerns with our data (which we've seen in previous residual plots). However, the ratios show that the differences are relatively small, which means we may not have too much to worry about.
+
+In any case, it's not clear that the standard errors are essential to this problem. That is in part because there is not a clear population on which to make inferences to. Our data includes cigarette sales in 46 states, which is nearly the entire U.S. Since we probably aren't going to use this data to make inferences to other countries, it is probably the case that our sample serves as the population. 
+
+We could use the data to make inferences about the remaining four states not in the dataset, although we might be interested in learning why these states weren't included in the first place before attempting to make inferences. In addition, we might be interested in making inferences to the future (i.e. forecasts), in which case using serial correlation robust standard errors might be of value.
+
+
+### Data citation
+
+Badi H. Baltagi, James M. Griffin and Weiwen Xiong. "To Pool or Not to Pool: Homogeneous versus Heterogeneous Estimators Applied to Cigarette Demand." The Review of Economics and Statistics, Vol. 82, No. 1 (Feb., 2000), pp. 117. http://www.jstor.org/stable/2646677.
